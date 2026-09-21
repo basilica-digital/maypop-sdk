@@ -157,7 +157,7 @@ read-only or non-data capabilities through the account authenticated by
 {
   "mode": "hybrid",
   "profile": "dev",
-  "remoteCapabilities": ["ai", "members", "link", "multiplayer"],
+  "remoteCapabilities": ["ai", "members", "link", "mcp", "multiplayer"],
   "notifications": "inspect"
 }
 ```
@@ -166,9 +166,13 @@ read-only or non-data capabilities through the account authenticated by
 transcription, and `maypop.agent` (the development host serves its lazy browser
 chunk). These calls use the selected account's real allowance and can consume
 credits. `members` reads the real app roster, `link` enables server-side URL
-unfurling, and `multiplayer` uses the real rendezvous API while loading the
-Iroh JS/Wasm runtime locally. KV and Drive remain local, and notifications
-remain in the inspector.
+unfurling, `mcp` exposes the app's real linked MCP servers and tools, and
+`multiplayer` uses the real rendezvous API while loading the Iroh JS/Wasm
+runtime locally. KV and Drive remain local, and notifications remain in the
+inspector. Connect a server with `maypop mcp connect`, then run `maypop mcp
+link` in the app repository before starting the development server. A hybrid
+configuration cannot combine the real `mcp` capability with
+`.maypop/mcp.json` fixtures.
 
 Connected mode skips local KV/Drive initialization and sends the entire app API
 surface to the real app:

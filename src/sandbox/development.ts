@@ -9,7 +9,12 @@ const DEV_CONFIG_NAME = "dev.json";
 
 export type DevelopmentMode = "sandbox" | "hybrid" | "connected";
 export type NotificationMode = "inspect" | "live" | "disabled";
-export type RemoteCapability = "ai" | "members" | "link" | "multiplayer";
+export type RemoteCapability =
+  | "ai"
+  | "members"
+  | "link"
+  | "mcp"
+  | "multiplayer";
 export type SandboxRole = "reader" | "writer" | "editor" | "admin";
 
 export type SandboxViewer = {
@@ -82,6 +87,7 @@ const REMOTE_CAPABILITIES = [
   "ai",
   "members",
   "link",
+  "mcp",
   "multiplayer",
 ] as const;
 
@@ -290,7 +296,7 @@ export async function loadDevelopmentConfig(
   ) {
     throw configError(
       path,
-      '`remoteCapabilities` may contain only "ai", "members", "link", and "multiplayer"',
+      '`remoteCapabilities` may contain only "ai", "members", "link", "mcp", and "multiplayer"',
     );
   }
   if (configuredCapabilities != null && mode !== "hybrid") {

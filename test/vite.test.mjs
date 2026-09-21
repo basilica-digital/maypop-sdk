@@ -677,7 +677,7 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
           token: "remote-app-token",
           expiresIn: 1,
           refreshToken: "remote-refresh-token",
-          scopes: "identity:read group:read ai:use mp:list mp:create mp:join notify:send",
+          scopes: "identity:read group:read ai:use mcp:use mp:list mp:create mp:join notify:send",
         }),
       );
       return;
@@ -689,7 +689,7 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
         JSON.stringify({
           token: "remote-app-token-refreshed",
           expiresIn: 300,
-          scopes: "identity:read group:read ai:use mp:list mp:create mp:join notify:send",
+          scopes: "identity:read group:read ai:use mcp:use mp:list mp:create mp:join notify:send",
         }),
       );
       return;
@@ -709,7 +709,7 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
           avatarUrl: null,
           connected: true,
           isAnonymous: false,
-          scopes: "identity:read group:read ai:use mp:list mp:create mp:join notify:send",
+          scopes: "identity:read group:read ai:use mcp:use mp:list mp:create mp:join notify:send",
         }),
       );
       return;
@@ -732,6 +732,24 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
     }
     if (request.url === "/app-api/multiplayer/room-key?room=board") {
       response.end(JSON.stringify({ key: "fixture-room-key" }));
+      return;
+    }
+    if (request.url === "/app-api/mcp/servers") {
+      response.end(
+        JSON.stringify({
+          servers: [
+            {
+              id: "00000000-0000-4000-8000-000000000005",
+              name: "Connected search",
+              authKind: "headers",
+              needsReauth: false,
+              toolkitSlug: null,
+              logoUrl: null,
+              account: null,
+            },
+          ],
+        }),
+      );
       return;
     }
     if (request.url === "/app-api/kv/pull") {
@@ -794,7 +812,7 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
     JSON.stringify({
       mode: "hybrid",
       profile: "dev",
-      remoteCapabilities: ["ai", "members", "link", "multiplayer"],
+      remoteCapabilities: ["ai", "members", "link", "mcp", "multiplayer"],
       notifications: "inspect",
     }),
   );
@@ -828,6 +846,10 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
       { headers: authorization },
     ).then((response) => response.json());
     assert.equal(room.key, "fixture-room-key");
+    const mcp = await fetch(`${sandbox.url}/app-api/mcp/servers`, {
+      headers: authorization,
+    }).then((response) => response.json());
+    assert.equal(mcp.servers[0].name, "Connected search");
 
     const localPull = await fetch(`${sandbox.url}/app-api/kv/pull`, {
       method: "POST",
@@ -847,7 +869,7 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
     assert.deepEqual(outbox.notifications[0].recipients, [
       { id: teammateId, username: "Teammate" },
     ]);
-    assert.equal(remoteRequests, 6);
+    assert.equal(remoteRequests, 7);
     assert.equal(refreshRequests, 1);
     assert.equal(mintRequests, 1);
 
@@ -874,7 +896,11 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
     }).then((response) => response.json());
     assert.equal(connectedPull.cookie, 17);
     assert.equal(connectedPull.patch[1].key, "remote");
-    assert.equal(remoteRequests, 2);
+    const connectedMcp = await fetch(`${sandbox.url}/app-api/mcp/servers`, {
+      headers: { Authorization: `Bearer ${connectedToken}` },
+    }).then((response) => response.json());
+    assert.equal(connectedMcp.servers[0].name, "Connected search");
+    assert.equal(remoteRequests, 3);
     assert.equal(refreshRequests, 2);
     assert.equal(mintRequests, 2);
   } finally {

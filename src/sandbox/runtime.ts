@@ -981,6 +981,15 @@ export async function createMaypopSandboxRuntime(
             mockMcpPath,
             await readJson<unknown>(mockMcpPath, emptyMockMcp),
           );
+    if (
+      development.mode === "hybrid" &&
+      development.remoteCapabilities.includes("mcp") &&
+      mockMcp.servers.length > 0
+    ) {
+      throw new Error(
+        "Hybrid MCP cannot use both real app integrations and .maypop/mcp.json fixtures. Remove the fixture or remove `mcp` from remoteCapabilities.",
+      );
+    }
     const kvPolicyPath = resolve(root, ".maypop/kv-policy.json");
     const rawKvPolicy = development.strictStorage
       ? await readJson<unknown | null>(kvPolicyPath, null)
@@ -1064,6 +1073,12 @@ export async function createMaypopSandboxRuntime(
           for (const scope of ["mp:list", "mp:create", "mp:join"]) {
             if (remoteScopeSet.has(scope)) scopeSet.add(scope);
           }
+        }
+        if (
+          development.remoteCapabilities.includes("mcp") &&
+          remoteScopeSet.has("mcp:use")
+        ) {
+          scopeSet.add("mcp:use");
         }
       }
       if (
@@ -1524,6 +1539,8 @@ export async function createMaypopSandboxRuntime(
               development.remoteCapabilities.includes("multiplayer"))) ||
           (url.pathname.startsWith("/app-api/multiplayer/") &&
             development.remoteCapabilities.includes("multiplayer")) ||
+          (url.pathname.startsWith("/app-api/mcp/") &&
+            development.remoteCapabilities.includes("mcp")) ||
           (url.pathname === "/app-api/unfurl" &&
             development.remoteCapabilities.includes("link"));
         if (remoteCapability) {
