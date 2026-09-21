@@ -17,6 +17,22 @@ import {
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  type AppMe,
+  type AppMember,
+  type DevelopmentMode,
+  RemoteAppSession,
+  loadDevelopmentConfig,
+  mintDevelopmentSession,
+  proxyRemoteAppRequest,
+  remoteJson,
+} from "./development.js";
+import {
+  type NotificationData,
+  type NotificationRecord,
+  notificationInspectorHtml,
+} from "./notification-inspector.js";
+
 const MAX_BODY_BYTES = 51 * 1024 * 1024;
 const SANDBOX_SCOPES = "identity:read kv:read kv:write drive:read drive:write";
 export const SANDBOX_APP_QUERY = "__maypop_app";
@@ -240,6 +256,8 @@ function validateCid(cid: string): void {
 function sandboxHtml(
   identity: SandboxIdentity,
   token: string,
+  scopes: string,
+  mode: DevelopmentMode,
   appRequestToken: string,
   kvPullIntervalMs: number | undefined,
 ): string {
@@ -247,8 +265,9 @@ function sandboxHtml(
     appId: identity.appId,
     appRequestToken,
     kvPullIntervalMs,
+    mode,
     token,
-    scopes: SANDBOX_SCOPES,
+    scopes,
   }).replaceAll("<", "\\u003c");
 
   return `<!doctype html>
@@ -267,7 +286,7 @@ function sandboxHtml(
         padding: 6px 9px; border: 1px solid rgb(255 255 255 / 18%);
         border-radius: 999px; color: rgb(255 255 255 / 72%);
         background: rgb(10 10 10 / 78%); backdrop-filter: blur(10px);
-        font-size: 11px; pointer-events: none;
+        font-size: 11px; text-decoration: none;
       }
     </style>
   </head>
@@ -278,7 +297,7 @@ function sandboxHtml(
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-popups-to-escape-sandbox allow-downloads"
       allow="autoplay; clipboard-read; clipboard-write; encrypted-media; fullscreen; geolocation; microphone; camera; display-capture; accelerometer; gyroscope; magnetometer"
     ></iframe>
-    <div id="badge">Maypop sandbox</div>
+    <a id="badge" href="/_maypop/notifications" target="_blank" rel="noreferrer">Maypop development</a>
     <script>
       const config = ${config};
       const frame = document.getElementById("app");
@@ -302,9 +321,15 @@ function sandboxHtml(
         const channel = new MessageChannel();
         port = channel.port1;
         port.onmessage = (event) => {
-          if (event.data?.type === "maypop:ready") badge.textContent = "Maypop sandbox · connected";
+          if (event.data?.type === "maypop:ready") badge.textContent = "Maypop " + config.mode + " · connected";
           if (event.data?.type === "maypop:refresh") {
-            port.postMessage({ type: "maypop:token", token: config.token, expiresIn: 86400, scopes: config.scopes });
+            fetch("/_maypop/session", { cache: "no-store" })
+              .then((response) => {
+                if (!response.ok) throw new Error("session refresh failed (" + response.status + ")");
+                return response.json();
+              })
+              .then((session) => port.postMessage({ type: "maypop:token", ...session }))
+              .catch(() => port.postMessage({ type: "maypop:revoked" }));
           }
           const unsupportedReplies = {
             "maypop:open-app": "maypop:open-app-error",
@@ -520,24 +545,86 @@ export async function createMaypopSandboxRuntime(
   await mkdir(dataDirectory, { recursive: true });
   const releaseLock = acquireDataDirectoryLock(dataDirectory);
   try {
+    const development = await loadDevelopmentConfig(dataDirectory);
+    const remoteSession =
+      development.mode === "sandbox"
+        ? undefined
+        : new RemoteAppSession(
+            await mintDevelopmentSession(root, development.profile),
+          );
+    const remoteMe = remoteSession
+      ? await remoteJson<AppMe>(remoteSession, "/me")
+      : undefined;
+    if (remoteSession && remoteMe) {
+      const target = `@${remoteMe.username} · profile ${remoteSession.profile} · ${remoteSession.apiUrl} · app ${remoteSession.appId}`;
+      if (development.mode === "connected") {
+        console.warn(
+          `[maypop] connected development: ${target}. App data and enabled capabilities are real; notifications are ${development.notifications}.`,
+        );
+      } else {
+        console.info(
+          `[maypop] hybrid development: ${target}. KV and Drive stay local; authenticated capabilities can consume real allowance.`,
+        );
+      }
+    }
+    const usesLocalData = development.mode !== "connected";
     const driveDirectory = join(dataDirectory, "drive");
     const driveFilesDirectory = join(driveDirectory, "files");
     const pendingDirectory = join(driveDirectory, "pending");
-    await mkdir(driveFilesDirectory, { recursive: true });
-    await rm(pendingDirectory, { recursive: true, force: true });
-    await mkdir(pendingDirectory, { recursive: true });
+    if (usesLocalData) {
+      await mkdir(driveFilesDirectory, { recursive: true });
+      await rm(pendingDirectory, { recursive: true, force: true });
+      await mkdir(pendingDirectory, { recursive: true });
+    }
 
-    const identity = await loadIdentity(dataDirectory);
+    const localIdentity = remoteSession
+      ? undefined
+      : await loadIdentity(dataDirectory);
+    const identity: SandboxIdentity = remoteSession
+      ? { schemaVersion: 1, appId: remoteSession.appId, viewerId: remoteMe!.id }
+      : localIdentity!;
     const token = randomBytes(32).toString("base64url");
     const appRequestToken = randomBytes(18).toString("base64url");
+    function developmentScopes(): string {
+      const remoteScopeSet = new Set(
+        remoteSession?.scopes.split(/\s+/).filter(Boolean),
+      );
+      const scopeSet =
+        development.mode === "connected"
+          ? remoteScopeSet
+          : new Set(SANDBOX_SCOPES.split(" "));
+      if (development.mode === "sandbox") scopeSet.add("group:read");
+      if (development.mode === "hybrid") {
+        if (
+          development.remoteCapabilities.includes("ai") &&
+          remoteScopeSet.has("ai:use")
+        ) {
+          scopeSet.add("ai:use");
+        }
+        if (
+          development.remoteCapabilities.includes("members") &&
+          remoteScopeSet.has("group:read")
+        ) {
+          scopeSet.add("group:read");
+        }
+      }
+      if (development.notifications === "inspect") scopeSet.add("notify:send");
+      if (development.notifications === "disabled")
+        scopeSet.delete("notify:send");
+      return [...scopeSet].join(" ");
+    }
+    const initialScopes = developmentScopes();
     const kvPath = join(dataDirectory, "kv.json");
-    const kvData = await readJson<Partial<KvData>>(kvPath, {
+    const emptyKvData: KvData = {
       schemaVersion: 1,
       version: 0,
       entries: {},
       clients: {},
       clientVersions: {},
-    });
+    };
+    const kvData = usesLocalData
+      ? await readJson<Partial<KvData>>(kvPath, emptyKvData)
+      : emptyKvData;
     if (kvData.schemaVersion != null && kvData.schemaVersion !== 1) {
       throw new Error(`Unsupported Maypop KV schema version in ${kvPath}.`);
     }
@@ -553,13 +640,16 @@ export async function createMaypopSandboxRuntime(
         Object.keys(kvData.clients).map((clientId) => [clientId, version]),
       );
     }
-    if (migrateKvData) await writeJsonAtomic(kvPath, kvData);
+    if (usesLocalData && migrateKvData) await writeJsonAtomic(kvPath, kvData);
     const kv = new JsonStore(kvPath, kvData as KvData);
     const drivePath = join(driveDirectory, "index.json");
-    const driveData = await readJson<Partial<DriveData>>(drivePath, {
+    const emptyDriveData: DriveData = {
       schemaVersion: 1,
       files: [],
-    });
+    };
+    const driveData = usesLocalData
+      ? await readJson<Partial<DriveData>>(drivePath, emptyDriveData)
+      : emptyDriveData;
     if (driveData.schemaVersion != null && driveData.schemaVersion !== 1) {
       throw new Error(
         `Unsupported Maypop Drive schema version in ${drivePath}.`,
@@ -568,13 +658,63 @@ export async function createMaypopSandboxRuntime(
     const migrateDriveData = driveData.schemaVersion !== 1;
     driveData.schemaVersion = 1;
     driveData.files ??= [];
-    if (migrateDriveData) await writeJsonAtomic(drivePath, driveData);
+    if (usesLocalData && migrateDriveData)
+      await writeJsonAtomic(drivePath, driveData);
     const drive = new JsonStore(drivePath, driveData as DriveData);
+    const notificationPath = join(dataDirectory, "notifications.json");
+    const notificationData = await readJson<Partial<NotificationData>>(
+      notificationPath,
+      { schemaVersion: 1, notifications: [] },
+    );
+    if (
+      notificationData.schemaVersion != null &&
+      notificationData.schemaVersion !== 1
+    ) {
+      throw new Error(
+        `Unsupported Maypop notification schema version in ${notificationPath}.`,
+      );
+    }
+    notificationData.schemaVersion = 1;
+    notificationData.notifications ??= [];
+    const notifications = new JsonStore(
+      notificationPath,
+      notificationData as NotificationData,
+    );
     const pending = new Map<
       string,
       { mimeType: string | null; size: number }
     >();
     const pokeClients = new Set<ServerResponse>();
+    const remoteControllers = new Set<AbortController>();
+
+    const localMember = (): AppMember => ({
+      id: identity.viewerId,
+      username: options.username ?? "Developer",
+      role: "admin",
+      avatarUrl: null,
+      connected: true,
+    });
+
+    async function currentViewer(): Promise<AppMe | AppMember> {
+      return remoteSession
+        ? remoteJson<AppMe>(remoteSession, "/me")
+        : localMember();
+    }
+
+    async function currentMembers(): Promise<AppMember[]> {
+      if (
+        remoteSession &&
+        (development.mode === "connected" ||
+          development.remoteCapabilities.includes("members"))
+      ) {
+        const result = await remoteJson<{
+          members: AppMember[];
+          guestCount: number;
+        }>(remoteSession, "/members");
+        return result.members;
+      }
+      return [localMember()];
+    }
 
     function poke(): void {
       for (const response of pokeClients) response.write("data: poke\n\n");
@@ -588,6 +728,35 @@ export async function createMaypopSandboxRuntime(
       const method = request.method ?? "GET";
       const url = new URL(request.url ?? "/", "http://maypop.local");
 
+      if (method === "GET" && url.pathname === "/_maypop/notifications") {
+        response.writeHead(200, {
+          "Cache-Control": "no-store",
+          "Content-Type": "text/html; charset=utf-8",
+        });
+        response.end(notificationInspectorHtml(development.mode));
+        return;
+      }
+      if (method === "GET" && url.pathname === "/_maypop/notifications.json") {
+        sendJson(response, notifications.value);
+        return;
+      }
+      if (method === "DELETE" && url.pathname === "/_maypop/notifications") {
+        await notifications.update((data) => {
+          data.notifications = [];
+        });
+        sendEmpty(response);
+        return;
+      }
+      if (method === "GET" && url.pathname === "/_maypop/session") {
+        if (remoteSession) await remoteSession.currentToken();
+        sendJson(response, {
+          token,
+          expiresIn: 86_400,
+          scopes: developmentScopes(),
+        });
+        return;
+      }
+
       if (isSandboxDocumentRequest(method, request, url, appRequestToken)) {
         response.writeHead(200, {
           "Cache-Control": "no-store",
@@ -597,6 +766,8 @@ export async function createMaypopSandboxRuntime(
           sandboxHtml(
             identity,
             token,
+            initialScopes,
+            development.mode,
             appRequestToken,
             options.kvPullIntervalMs,
           ),
@@ -694,15 +865,132 @@ export async function createMaypopSandboxRuntime(
       requireToken(request, url, token);
 
       if (method === "GET" && url.pathname === "/app-api/me") {
+        const viewer = await currentViewer();
         sendJson(response, {
-          id: identity.viewerId,
-          username: options.username ?? "Developer",
-          role: "admin",
-          avatarUrl: null,
-          connected: true,
+          ...viewer,
           isAnonymous: false,
-          scopes: SANDBOX_SCOPES,
+          scopes: developmentScopes(),
         });
+        return;
+      }
+
+      if (url.pathname === "/app-api/notify") {
+        if (development.notifications === "disabled") {
+          throw new HttpError(403, "notifications are disabled for local development");
+        }
+        if (development.notifications === "inspect") {
+          if (method !== "POST") throw new HttpError(405, "method not allowed");
+          const body = await readJsonBody<{
+            to?: "all" | string[];
+            title?: unknown;
+            body?: unknown;
+            path?: unknown;
+          }>(request);
+          if (
+            typeof body.title !== "string" ||
+            !body.title.trim() ||
+            [...body.title.trim()].length > 120
+          ) {
+            throw new HttpError(400, "invalid title");
+          }
+          const notificationBody =
+            typeof body.body === "string" ? body.body.trim() : undefined;
+          if (
+            body.body != null &&
+            (typeof body.body !== "string" ||
+              [...(notificationBody ?? "")].length > 500)
+          ) {
+            throw new HttpError(400, "invalid body");
+          }
+          const notificationPath =
+            typeof body.path === "string" ? body.path.trim() : undefined;
+          if (
+            body.path != null &&
+            (typeof body.path !== "string" ||
+              (notificationPath != null &&
+                notificationPath !== "" &&
+                (notificationPath === "/" ||
+                  !notificationPath.startsWith("/") ||
+                  notificationPath.startsWith("//") ||
+                  notificationPath.includes("\\") ||
+                  [...notificationPath].some((character) =>
+                    /[\u0000-\u001f\u007f-\u009f]/.test(character),
+                  ) ||
+                  [...notificationPath].length > 512)))
+          ) {
+            throw new HttpError(400, "invalid path");
+          }
+          if (
+            body.to !== "all" &&
+            (!Array.isArray(body.to) ||
+              body.to.length === 0 ||
+              body.to.length > 256 ||
+              body.to.some((id) => typeof id !== "string"))
+          ) {
+            throw new HttpError(400, "invalid recipients");
+          }
+          const members = await currentMembers();
+          const sender = await currentViewer();
+          const recipients =
+            body.to === "all"
+              ? members.filter((member) => member.id !== sender.id)
+              : members.filter((member) => body.to!.includes(member.id));
+          const record: NotificationRecord = {
+            id: randomUUID(),
+            createdAt: new Date().toISOString(),
+            sender: { id: sender.id, username: sender.username },
+            requestedTo: body.to,
+            recipients: recipients.map(({ id, username }) => ({ id, username })),
+            title: body.title.trim(),
+            ...(notificationBody ? { body: notificationBody } : {}),
+            ...(notificationPath ? { path: notificationPath } : {}),
+          };
+          await notifications.update((data) => {
+            data.notifications.push(record);
+          });
+          console.info(
+            `[maypop] captured notification “${record.title}” for ${record.recipients.length} recipient${record.recipients.length === 1 ? "" : "s"}`,
+          );
+          sendEmpty(response);
+          return;
+        }
+      }
+
+      if (development.mode === "connected" && remoteSession) {
+        await proxyRemoteAppRequest(
+          request,
+          response,
+          url,
+          remoteSession,
+          token,
+          remoteControllers,
+        );
+        return;
+      }
+
+      if (development.mode === "hybrid" && remoteSession) {
+        const remoteCapability =
+          (url.pathname.startsWith("/app-api/ai/") &&
+            development.remoteCapabilities.includes("ai")) ||
+          (url.pathname === "/app-api/members" &&
+            development.remoteCapabilities.includes("members")) ||
+          (url.pathname === "/app-api/unfurl" &&
+            development.remoteCapabilities.includes("link"));
+        if (remoteCapability) {
+          await proxyRemoteAppRequest(
+            request,
+            response,
+            url,
+            remoteSession,
+            token,
+            remoteControllers,
+          );
+          return;
+        }
+      }
+
+      if (method === "GET" && url.pathname === "/app-api/members") {
+        sendJson(response, { members: [localMember()], guestCount: 0 });
         return;
       }
 
@@ -921,6 +1209,8 @@ export async function createMaypopSandboxRuntime(
       close() {
         for (const response of pokeClients) response.end();
         pokeClients.clear();
+        for (const controller of remoteControllers) controller.abort();
+        remoteControllers.clear();
         releaseLock();
       },
     };

@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +15,13 @@ import { test } from "node:test";
 import { createServer as createViteServer } from "vite";
 
 import { maypop } from "@basilica-digital/maypop-sdk/vite";
+
+test("the public plugin type is independent of the SDK's Vite version", async () => {
+  const declaration = await readFile(join(process.cwd(), "dist/vite.d.ts"), "utf8");
+
+  assert.doesNotMatch(declaration, /from ["']vite["']/);
+  assert.match(declaration, /interface MaypopVitePlugin/);
+});
 
 function readSandboxConfigValue(html, name) {
   const match = html.match(new RegExp(`"${name}":"([^"]+)"`));
@@ -220,14 +234,37 @@ test("the Vite plugin hosts and persists sandbox KV and Drive", async () => {
     assert.equal(invalidRange.status, 416);
     assert.equal(invalidRange.headers.get("content-range"), "bytes */5");
 
-    const unsupported = await fetch(`${sandbox.url}/app-api/members`, {
+    const me = await fetch(`${sandbox.url}/app-api/me`, {
       headers: authorization,
+    }).then((response) => response.json());
+    assert.match(me.scopes, /notify:send/);
+    const members = await fetch(`${sandbox.url}/app-api/members`, {
+      headers: authorization,
+    }).then((response) => response.json());
+    assert.equal(members.members[0].id, me.id);
+    assert.equal(members.members[0].username, "Developer");
+
+    const notified = await fetch(`${sandbox.url}/app-api/notify`, {
+      method: "POST",
+      headers: { ...authorization, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: [me.id],
+        title: "Your turn",
+        body: "Open the shared board.",
+        path: "/board/7",
+      }),
     });
-    assert.equal(unsupported.status, 501);
-    assert.deepEqual(await unsupported.json(), {
-      error: "The local Maypop sandbox does not implement members yet.",
-      code: "sandbox_capability_unavailable",
-    });
+    assert.equal(notified.status, 204);
+    const outbox = await fetch(
+      `${sandbox.url}/_maypop/notifications.json`,
+    ).then((response) => response.json());
+    assert.equal(outbox.notifications.length, 1);
+    assert.equal(outbox.notifications[0].recipients[0].username, "Developer");
+    assert.equal(outbox.notifications[0].path, "/board/7");
+    const inspector = await fetch(`${sandbox.url}/_maypop/notifications`).then(
+      (response) => response.text(),
+    );
+    assert.match(inspector, /Notification outbox/);
 
     const worker = await fetch(`${sandbox.url}/_maypop-sw.js`).then(
       (response) => response.text(),
@@ -341,6 +378,267 @@ test("invalid persisted data fails clearly without leaving the directory locked"
     const sandbox = await startMiddlewareSandbox(root);
     await sandbox.close();
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("development config rejects live notifications outside connected mode", async () => {
+  const root = await mkdtemp(join(tmpdir(), "maypop-invalid-dev-config-test-"));
+  const dataDirectory = join(root, ".maypop");
+  await mkdir(dataDirectory, { recursive: true });
+  await writeFile(
+    join(dataDirectory, "dev.json"),
+    JSON.stringify({ mode: "hybrid", notifications: "live" }),
+  );
+
+  try {
+    await assert.rejects(
+      startMiddlewareSandbox(root),
+      /notifications.*live.*requires.*connected/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("development config requires a JSON object", async () => {
+  const root = await mkdtemp(join(tmpdir(), "maypop-invalid-dev-shape-test-"));
+  const dataDirectory = join(root, ".maypop");
+  await mkdir(dataDirectory, { recursive: true });
+  await writeFile(join(dataDirectory, "dev.json"), "null");
+
+  try {
+    await assert.rejects(
+      startMiddlewareSandbox(root),
+      /top-level value must be an object/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hybrid mode reads the selected profile and mints its own app session", async () => {
+  const root = await mkdtemp(join(tmpdir(), "maypop-hybrid-test-"));
+  const dataDirectory = join(root, ".maypop");
+  const profileDirectory = join(root, "profiles");
+  const appId = "00000000-0000-4000-8000-000000000001";
+  const viewerId = "00000000-0000-4000-8000-000000000002";
+  const teammateId = "00000000-0000-4000-8000-000000000003";
+  let mintRequests = 0;
+  let remoteRequests = 0;
+  let refreshRequests = 0;
+  const api = createHttpServer(async (request, response) => {
+    if (request.url === "/app-sessions") {
+      mintRequests += 1;
+      assert.equal(request.headers.authorization, "Bearer cli-profile-token");
+      const chunks = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString("utf8")), {
+        appId,
+        deviceLabel: "Maypop SDK development",
+      });
+      response.setHeader("Content-Type", "application/json");
+      response.end(
+        JSON.stringify({
+          sessionId: "00000000-0000-4000-8000-000000000004",
+          token: "remote-app-token",
+          expiresIn: 1,
+          refreshToken: "remote-refresh-token",
+          scopes: "identity:read group:read ai:use notify:send",
+        }),
+      );
+      return;
+    }
+    if (request.url === "/app-sessions/refresh") {
+      refreshRequests += 1;
+      response.setHeader("Content-Type", "application/json");
+      response.end(
+        JSON.stringify({
+          token: "remote-app-token-refreshed",
+          expiresIn: 300,
+          scopes: "identity:read group:read ai:use notify:send",
+        }),
+      );
+      return;
+    }
+    assert.equal(
+      request.headers.authorization,
+      "Bearer remote-app-token-refreshed",
+    );
+    remoteRequests += 1;
+    response.setHeader("Content-Type", "application/json");
+    if (request.url === "/app-api/me") {
+      response.end(
+        JSON.stringify({
+          id: viewerId,
+          username: "Authenticated developer",
+          role: "admin",
+          avatarUrl: null,
+          connected: true,
+          isAnonymous: false,
+          scopes: "identity:read group:read ai:use notify:send",
+        }),
+      );
+      return;
+    }
+    if (request.url === "/app-api/members") {
+      response.end(
+        JSON.stringify({
+          members: [
+            { id: viewerId, username: "Authenticated developer", role: "admin", avatarUrl: null, connected: true },
+            { id: teammateId, username: "Teammate", role: "writer", avatarUrl: null, connected: false },
+          ],
+          guestCount: 0,
+        }),
+      );
+      return;
+    }
+    if (request.url === "/app-api/ai/models") {
+      response.end(JSON.stringify({ data: [{ id: "fast", description: "Fast" }] }));
+      return;
+    }
+    if (request.url === "/app-api/kv/pull") {
+      response.end(
+        JSON.stringify({
+          cookie: 17,
+          lastMutationIDChanges: {},
+          patch: [{ op: "clear" }, { op: "put", key: "remote", value: { value: true } }],
+        }),
+      );
+      return;
+    }
+    response.writeHead(404);
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+  api.listen(0, "127.0.0.1");
+  await once(api, "listening");
+  const apiAddress = api.address();
+  assert.ok(apiAddress && typeof apiAddress !== "string");
+  const apiUrl = `http://127.0.0.1:${apiAddress.port}`;
+
+  await mkdir(dataDirectory, { recursive: true });
+  await mkdir(profileDirectory, { recursive: true });
+  execFileSync("git", ["init", "-b", "main"], {
+    cwd: root,
+    stdio: "ignore",
+  });
+  execFileSync("git", ["config", "--local", "maypop.app-id", appId], {
+    cwd: root,
+  });
+  execFileSync("git", ["config", "--local", "maypop.api-url", apiUrl], {
+    cwd: root,
+  });
+  const profile = (profileApiUrl, token, username) => ({
+    apiUrl: profileApiUrl,
+    token,
+    expiresAt: "2027-01-01T00:00:00Z",
+    user: {
+      id: viewerId,
+      username,
+      name: null,
+      email: `${username}@example.com`,
+      gitUserId: `user_${username}`,
+      gitServerUrl: `${profileApiUrl}/git`,
+    },
+  });
+  await writeFile(
+    join(profileDirectory, "profiles.json"),
+    JSON.stringify({
+      version: 1,
+      defaultProfile: "other",
+      profiles: {
+        dev: profile(apiUrl, "cli-profile-token", "developer"),
+        other: profile("https://other.example", "other-token", "other"),
+      },
+    }),
+  );
+  await writeFile(
+    join(dataDirectory, "dev.json"),
+    JSON.stringify({ mode: "hybrid", profile: "dev", notifications: "inspect" }),
+  );
+
+  const previousConfigDirectory = process.env.MAYPOP_CONFIG_DIR;
+  const previousProfile = process.env.MAYPOP_PROFILE;
+  process.env.MAYPOP_CONFIG_DIR = profileDirectory;
+  delete process.env.MAYPOP_PROFILE;
+  let sandbox;
+  try {
+    sandbox = await startMiddlewareSandbox(root);
+    const hostHtml = await fetch(sandbox.url, {
+      headers: { Accept: "text/html" },
+    }).then((response) => response.text());
+    const token = readSandboxConfigValue(hostHtml, "token");
+    const authorization = { Authorization: `Bearer ${token}` };
+    assert.match(hostHtml, /"mode":"hybrid"/);
+    assert.match(hostHtml, /ai:use/);
+
+    const me = await fetch(`${sandbox.url}/app-api/me`, {
+      headers: authorization,
+    }).then((response) => response.json());
+    assert.equal(me.username, "Authenticated developer");
+    const models = await fetch(`${sandbox.url}/app-api/ai/models`, {
+      headers: authorization,
+    }).then((response) => response.json());
+    assert.equal(models.data[0].id, "fast");
+
+    const localPull = await fetch(`${sandbox.url}/app-api/kv/pull`, {
+      method: "POST",
+      headers: { ...authorization, "Content-Type": "application/json" },
+      body: JSON.stringify({ cookie: null }),
+    }).then((response) => response.json());
+    assert.equal(localPull.patch[0].op, "clear");
+
+    await fetch(`${sandbox.url}/app-api/notify`, {
+      method: "POST",
+      headers: { ...authorization, "Content-Type": "application/json" },
+      body: JSON.stringify({ to: "all", title: "Review requested" }),
+    });
+    const outbox = await fetch(
+      `${sandbox.url}/_maypop/notifications.json`,
+    ).then((response) => response.json());
+    assert.deepEqual(outbox.notifications[0].recipients, [
+      { id: teammateId, username: "Teammate" },
+    ]);
+    assert.equal(remoteRequests, 5);
+    assert.equal(refreshRequests, 1);
+    assert.equal(mintRequests, 1);
+
+    await sandbox.close();
+    sandbox = undefined;
+    await writeFile(
+      join(dataDirectory, "dev.json"),
+      JSON.stringify({ mode: "connected", notifications: "inspect" }),
+    );
+    await writeFile(join(dataDirectory, "kv.json"), "not local data");
+    remoteRequests = 0;
+    sandbox = await startMiddlewareSandbox(root);
+    const connectedHtml = await fetch(sandbox.url, {
+      headers: { Accept: "text/html" },
+    }).then((response) => response.text());
+    const connectedToken = readSandboxConfigValue(connectedHtml, "token");
+    const connectedPull = await fetch(`${sandbox.url}/app-api/kv/pull`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${connectedToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ cookie: null }),
+    }).then((response) => response.json());
+    assert.equal(connectedPull.cookie, 17);
+    assert.equal(connectedPull.patch[1].key, "remote");
+    assert.equal(remoteRequests, 2);
+    assert.equal(refreshRequests, 2);
+    assert.equal(mintRequests, 2);
+  } finally {
+    if (previousConfigDirectory === undefined)
+      delete process.env.MAYPOP_CONFIG_DIR;
+    else process.env.MAYPOP_CONFIG_DIR = previousConfigDirectory;
+    if (previousProfile === undefined) delete process.env.MAYPOP_PROFILE;
+    else process.env.MAYPOP_PROFILE = previousProfile;
+    await sandbox?.close().catch(() => {});
+    await new Promise((resolve, reject) =>
+      api.close((error) => (error ? reject(error) : resolve())),
+    );
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -42,6 +42,9 @@ test("the Next.js binding composes rewrites around a private sandbox server", as
     }
     const rewrites = await config.rewrites();
     assert.equal(rewrites.afterFiles[0].source, "/legacy");
+    assert.ok(
+      rewrites.beforeFiles.some((rewrite) => rewrite.source === "/_maypop/:path*"),
+    );
 
     const documentRewrite = rewrites.beforeFiles.at(-1);
     assert.equal(documentRewrite.source, "/:path*");
