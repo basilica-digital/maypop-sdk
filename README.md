@@ -181,9 +181,10 @@ surface to the real app:
 The project must already be connected by `maypop init`, and the selected CLI
 profile must be authenticated and have access to that app. Omit `profile` to
 use the normal CLI selection rules, including `MAYPOP_PROFILE` and the profile
-whose API URL matches the repository. The development host asks the CLI for a
-short-lived app-scoped session; the saved CLI credential and refresh token are
-never exposed to application code.
+whose API URL matches the repository. The Node development host reads the
+owner-only profile store written by `maypop auth` and mints a short-lived,
+app-scoped session itself. The saved CLI credential and session refresh token
+are never exposed to application code or written under `.maypop/`.
 
 Real notification delivery requires connected mode and a second explicit
 opt-in:

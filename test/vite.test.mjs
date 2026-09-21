@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import {
-  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -410,17 +410,38 @@ test("development config requires a JSON object", async () => {
   }
 });
 
-test("hybrid mode uses the selected CLI profile for remote capabilities only", async () => {
+test("hybrid mode reads the selected profile and mints its own app session", async () => {
   const root = await mkdtemp(join(tmpdir(), "maypop-hybrid-test-"));
   const dataDirectory = join(root, ".maypop");
-  const cliPath = join(root, "fake-maypop");
-  const argsPath = join(root, "cli-args.json");
+  const profileDirectory = join(root, "profiles");
   const appId = "00000000-0000-4000-8000-000000000001";
   const viewerId = "00000000-0000-4000-8000-000000000002";
   const teammateId = "00000000-0000-4000-8000-000000000003";
+  let mintRequests = 0;
   let remoteRequests = 0;
   let refreshRequests = 0;
   const api = createHttpServer(async (request, response) => {
+    if (request.url === "/app-sessions") {
+      mintRequests += 1;
+      assert.equal(request.headers.authorization, "Bearer cli-profile-token");
+      const chunks = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString("utf8")), {
+        appId,
+        deviceLabel: "Maypop SDK development",
+      });
+      response.setHeader("Content-Type", "application/json");
+      response.end(
+        JSON.stringify({
+          sessionId: "00000000-0000-4000-8000-000000000004",
+          token: "remote-app-token",
+          expiresIn: 1,
+          refreshToken: "remote-refresh-token",
+          scopes: "identity:read group:read ai:use notify:send",
+        }),
+      );
+      return;
+    }
     if (request.url === "/app-sessions/refresh") {
       refreshRequests += 1;
       response.setHeader("Content-Type", "application/json");
@@ -489,42 +510,53 @@ test("hybrid mode uses the selected CLI profile for remote capabilities only", a
   const apiUrl = `http://127.0.0.1:${apiAddress.port}`;
 
   await mkdir(dataDirectory, { recursive: true });
+  await mkdir(profileDirectory, { recursive: true });
+  execFileSync("git", ["init", "-b", "main"], {
+    cwd: root,
+    stdio: "ignore",
+  });
+  execFileSync("git", ["config", "--local", "maypop.app-id", appId], {
+    cwd: root,
+  });
+  execFileSync("git", ["config", "--local", "maypop.api-url", apiUrl], {
+    cwd: root,
+  });
+  const profile = (profileApiUrl, token, username) => ({
+    apiUrl: profileApiUrl,
+    token,
+    expiresAt: "2027-01-01T00:00:00Z",
+    user: {
+      id: viewerId,
+      username,
+      name: null,
+      email: `${username}@example.com`,
+      gitUserId: `user_${username}`,
+      gitServerUrl: `${profileApiUrl}/git`,
+    },
+  });
+  await writeFile(
+    join(profileDirectory, "profiles.json"),
+    JSON.stringify({
+      version: 1,
+      defaultProfile: "other",
+      profiles: {
+        dev: profile(apiUrl, "cli-profile-token", "developer"),
+        other: profile("https://other.example", "other-token", "other"),
+      },
+    }),
+  );
   await writeFile(
     join(dataDirectory, "dev.json"),
     JSON.stringify({ mode: "hybrid", profile: "dev", notifications: "inspect" }),
   );
-  await writeFile(
-    cliPath,
-    `#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
-writeFileSync(process.env.FAKE_MAYPOP_ARGS, JSON.stringify(process.argv.slice(2)));
-console.log(JSON.stringify({
-  apiUrl: process.env.FAKE_MAYPOP_API_URL,
-  appId: "${appId}",
-  sessionId: "00000000-0000-4000-8000-000000000004",
-  token: "remote-app-token",
-  expiresIn: 1,
-  refreshToken: "remote-refresh-token",
-  scopes: "identity:read group:read ai:use notify:send"
-}));
-`,
-  );
-  await chmod(cliPath, 0o755);
 
-  const previousCli = process.env.MAYPOP_CLI;
-  const previousApi = process.env.FAKE_MAYPOP_API_URL;
-  const previousArgs = process.env.FAKE_MAYPOP_ARGS;
-  process.env.MAYPOP_CLI = cliPath;
-  process.env.FAKE_MAYPOP_API_URL = apiUrl;
-  process.env.FAKE_MAYPOP_ARGS = argsPath;
+  const previousConfigDirectory = process.env.MAYPOP_CONFIG_DIR;
+  const previousProfile = process.env.MAYPOP_PROFILE;
+  process.env.MAYPOP_CONFIG_DIR = profileDirectory;
+  delete process.env.MAYPOP_PROFILE;
   let sandbox;
   try {
     sandbox = await startMiddlewareSandbox(root);
-    assert.deepEqual(JSON.parse(await readFile(argsPath, "utf8")), [
-      "--profile",
-      "dev",
-      "sdk-session",
-    ]);
     const hostHtml = await fetch(sandbox.url, {
       headers: { Accept: "text/html" },
     }).then((response) => response.text());
@@ -562,12 +594,13 @@ console.log(JSON.stringify({
     ]);
     assert.equal(remoteRequests, 5);
     assert.equal(refreshRequests, 1);
+    assert.equal(mintRequests, 1);
 
     await sandbox.close();
     sandbox = undefined;
     await writeFile(
       join(dataDirectory, "dev.json"),
-      JSON.stringify({ mode: "connected", profile: "dev", notifications: "inspect" }),
+      JSON.stringify({ mode: "connected", notifications: "inspect" }),
     );
     await writeFile(join(dataDirectory, "kv.json"), "not local data");
     remoteRequests = 0;
@@ -588,13 +621,13 @@ console.log(JSON.stringify({
     assert.equal(connectedPull.patch[1].key, "remote");
     assert.equal(remoteRequests, 2);
     assert.equal(refreshRequests, 2);
+    assert.equal(mintRequests, 2);
   } finally {
-    if (previousCli === undefined) delete process.env.MAYPOP_CLI;
-    else process.env.MAYPOP_CLI = previousCli;
-    if (previousApi === undefined) delete process.env.FAKE_MAYPOP_API_URL;
-    else process.env.FAKE_MAYPOP_API_URL = previousApi;
-    if (previousArgs === undefined) delete process.env.FAKE_MAYPOP_ARGS;
-    else process.env.FAKE_MAYPOP_ARGS = previousArgs;
+    if (previousConfigDirectory === undefined)
+      delete process.env.MAYPOP_CONFIG_DIR;
+    else process.env.MAYPOP_CONFIG_DIR = previousConfigDirectory;
+    if (previousProfile === undefined) delete process.env.MAYPOP_PROFILE;
+    else process.env.MAYPOP_PROFILE = previousProfile;
     await sandbox?.close().catch(() => {});
     await new Promise((resolve, reject) =>
       api.close((error) => (error ? reject(error) : resolve())),

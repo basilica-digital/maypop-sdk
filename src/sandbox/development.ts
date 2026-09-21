@@ -21,11 +21,23 @@ export type DevelopmentConfig = {
 type AppSession = {
   apiUrl: string;
   appId: string;
+  profile: string;
   sessionId: string;
   token: string;
   expiresIn: number;
   refreshToken: string;
   scopes: string;
+};
+
+type SavedCredentials = {
+  apiUrl: string;
+  token: string;
+};
+
+type ProfileStore = {
+  version: number;
+  defaultProfile: string;
+  profiles: Record<string, SavedCredentials>;
 };
 
 export type AppMember = {
@@ -137,17 +149,126 @@ export async function loadDevelopmentConfig(
   };
 }
 
-/** Ask the installed CLI for an app session using its normal profile rules. */
-export function runSdkSession(
-  root: string,
-  profile?: string,
-): Promise<AppSession> {
-  const executable = process.env.MAYPOP_CLI ?? "maypop";
-  const args = [...(profile ? ["--profile", profile] : []), "sdk-session"];
-  return new Promise((resolveSession, rejectSession) => {
-    const child = spawn(executable, args, {
-      cwd: root,
-      env: process.env,
+function profileStorePath(): string {
+  if (process.env.MAYPOP_CONFIG_DIR) {
+    return join(process.env.MAYPOP_CONFIG_DIR, "profiles.json");
+  }
+  if (process.env.XDG_CONFIG_HOME) {
+    return join(process.env.XDG_CONFIG_HOME, "maypop", "profiles.json");
+  }
+  if (process.platform === "win32" && process.env.APPDATA) {
+    return join(process.env.APPDATA, "maypop", "profiles.json");
+  }
+  if (!process.env.HOME) {
+    throw new Error(
+      "Maypop could not find a config directory; set MAYPOP_CONFIG_DIR",
+    );
+  }
+  return join(process.env.HOME, ".config", "maypop", "profiles.json");
+}
+
+function normalizeUrl(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+function validateProfileName(name: string): void {
+  if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+    throw new Error(
+      "Maypop profile names may contain only letters, numbers, `-`, and `_`",
+    );
+  }
+}
+
+async function loadProfileStore(): Promise<ProfileStore> {
+  const path = profileStorePath();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    if ((error as { code?: string }).code === "ENOENT") {
+      throw new Error(
+        `No Maypop profiles were found at ${path}. Run \`maypop auth\` first.`,
+      );
+    }
+    if (error instanceof SyntaxError) {
+      throw new Error(`Invalid Maypop profiles file at ${path}`);
+    }
+    throw new Error(`Could not read Maypop profiles from ${path}`, {
+      cause: error,
+    });
+  }
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed)
+  ) {
+    throw new Error(`Invalid Maypop profiles file at ${path}`);
+  }
+  const store = parsed as Partial<ProfileStore>;
+  if (
+    store.version !== 1 ||
+    typeof store.defaultProfile !== "string" ||
+    typeof store.profiles !== "object" ||
+    store.profiles === null ||
+    Array.isArray(store.profiles) ||
+    !store.profiles[store.defaultProfile]
+  ) {
+    throw new Error(`Unsupported or invalid Maypop profiles file at ${path}`);
+  }
+  for (const [name, credentials] of Object.entries(store.profiles)) {
+    validateProfileName(name);
+    if (
+      typeof credentials?.apiUrl !== "string" ||
+      !credentials.apiUrl ||
+      typeof credentials.token !== "string" ||
+      !credentials.token
+    ) {
+      throw new Error(`Invalid Maypop profile \`${name}\` at ${path}`);
+    }
+  }
+  return store as ProfileStore;
+}
+
+function selectProfile(
+  store: ProfileStore,
+  apiUrl: string,
+  configuredProfile?: string,
+): { name: string; credentials: SavedCredentials } {
+  const requested = configuredProfile ?? process.env.MAYPOP_PROFILE;
+  if (requested) {
+    validateProfileName(requested);
+    const credentials = store.profiles[requested];
+    if (!credentials) {
+      throw new Error(
+        `Maypop profile \`${requested}\` is not authenticated. Run \`maypop --profile ${requested} --url ${apiUrl} auth\`.`,
+      );
+    }
+    if (normalizeUrl(credentials.apiUrl) !== apiUrl) {
+      throw new Error(
+        `Maypop profile \`${requested}\` uses ${normalizeUrl(credentials.apiUrl)}, but this app uses ${apiUrl}`,
+      );
+    }
+    return { name: requested, credentials };
+  }
+
+  const preferred = store.profiles[store.defaultProfile];
+  if (normalizeUrl(preferred.apiUrl) === apiUrl) {
+    return { name: store.defaultProfile, credentials: preferred };
+  }
+  const matching = Object.entries(store.profiles).find(
+    ([, credentials]) => normalizeUrl(credentials.apiUrl) === apiUrl,
+  );
+  if (matching) {
+    return { name: matching[0], credentials: matching[1] };
+  }
+  throw new Error(
+    `No authenticated Maypop profile matches ${apiUrl}. Run \`maypop --url ${apiUrl} auth\`.`,
+  );
+}
+
+function runGit(root: string, args: string[]): Promise<string> {
+  return new Promise((resolveOutput, rejectOutput) => {
+    const child = spawn("git", ["-C", root, ...args], {
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];
@@ -155,57 +276,95 @@ export function runSdkSession(
     child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
     child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
     child.once("error", (error) => {
-      rejectSession(
-        new Error(
-          `Could not run ${executable}. Install or update the Maypop CLI, then run \`maypop auth\`.`,
-          { cause: error },
-        ),
-      );
+      rejectOutput(new Error("Git is required for connected Maypop development", { cause: error }));
     });
     child.once("close", (code) => {
       if (code !== 0) {
-        const detail = Buffer.concat(stderr).toString("utf8").trim();
-        rejectSession(
+        rejectOutput(
           new Error(
-            detail ||
-              "Maypop could not create a development session. Run `maypop auth` and confirm this account can access the app.",
+            Buffer.concat(stderr).toString("utf8").trim() ||
+              "Could not read the Maypop repository configuration",
           ),
         );
         return;
       }
-      try {
-        const session = JSON.parse(
-          Buffer.concat(stdout).toString("utf8"),
-        ) as Partial<AppSession>;
-        if (
-          !session.apiUrl ||
-          !session.appId ||
-          !session.sessionId ||
-          !session.token ||
-          !session.refreshToken ||
-          !session.scopes ||
-          typeof session.expiresIn !== "number" ||
-          session.expiresIn <= 0
-        ) {
-          throw new Error("the CLI returned an incomplete session");
-        }
-        resolveSession(session as AppSession);
-      } catch (error) {
-        rejectSession(
-          new Error(
-            "The Maypop CLI returned an invalid SDK session. Update the CLI and try again.",
-            { cause: error },
-          ),
-        );
-      }
+      resolveOutput(Buffer.concat(stdout).toString("utf8").trim());
     });
   });
+}
+
+async function repositoryConnection(
+  root: string,
+): Promise<{ appId: string; apiUrl: string }> {
+  const repository = await runGit(root, ["rev-parse", "--show-toplevel"]);
+  const [appId, configuredApiUrl] = await Promise.all([
+    runGit(repository, ["config", "--local", "--get", "maypop.app-id"]),
+    runGit(repository, ["config", "--local", "--get", "maypop.api-url"]),
+  ]);
+  if (!appId || !configuredApiUrl) {
+    throw new Error(
+      "This repository is not connected to Maypop. Run `maypop init` first.",
+    );
+  }
+  return { appId, apiUrl: normalizeUrl(configuredApiUrl) };
+}
+
+/** Mint an app-scoped session from the authenticated local profile store. */
+export async function mintDevelopmentSession(
+  root: string,
+  configuredProfile?: string,
+): Promise<AppSession> {
+  const [{ appId, apiUrl }, store] = await Promise.all([
+    repositoryConnection(root),
+    loadProfileStore(),
+  ]);
+  const profile = selectProfile(store, apiUrl, configuredProfile);
+  const response = await fetch(`${apiUrl}/app-sessions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${profile.credentials.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      appId,
+      deviceLabel: "Maypop SDK development",
+    }),
+  });
+  if (!response.ok) {
+    const detail = (await response.text()).trim();
+    throw new Error(
+      detail ||
+        `Maypop could not create a development session (${response.status}). Confirm profile \`${profile.name}\` can access this app.`,
+    );
+  }
+  const session = (await response.json()) as Partial<AppSession>;
+  if (
+    !session.sessionId ||
+    !session.token ||
+    !session.refreshToken ||
+    !session.scopes ||
+    typeof session.expiresIn !== "number" ||
+    session.expiresIn <= 0
+  ) {
+    throw new Error("Maypop returned an invalid development session");
+  }
+  return {
+    apiUrl,
+    appId,
+    profile: profile.name,
+    sessionId: session.sessionId,
+    token: session.token,
+    expiresIn: session.expiresIn,
+    refreshToken: session.refreshToken,
+    scopes: session.scopes,
+  };
 }
 
 /** App-scoped access held by the Node development host, never by app code. */
 export class RemoteAppSession {
   readonly apiUrl: string;
   readonly appId: string;
+  readonly profile: string;
   readonly sessionId: string;
   private accessToken: string;
   private refreshToken: string;
@@ -216,6 +375,7 @@ export class RemoteAppSession {
   constructor(session: AppSession) {
     this.apiUrl = session.apiUrl.replace(/\/$/, "");
     this.appId = session.appId;
+    this.profile = session.profile;
     this.sessionId = session.sessionId;
     this.accessToken = session.token;
     this.refreshToken = session.refreshToken;

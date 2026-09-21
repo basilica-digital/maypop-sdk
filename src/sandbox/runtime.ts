@@ -23,9 +23,9 @@ import {
   type DevelopmentMode,
   RemoteAppSession,
   loadDevelopmentConfig,
+  mintDevelopmentSession,
   proxyRemoteAppRequest,
   remoteJson,
-  runSdkSession,
 } from "./development.js";
 import {
   type NotificationData,
@@ -550,13 +550,13 @@ export async function createMaypopSandboxRuntime(
       development.mode === "sandbox"
         ? undefined
         : new RemoteAppSession(
-            await runSdkSession(root, development.profile),
+            await mintDevelopmentSession(root, development.profile),
           );
     const remoteMe = remoteSession
       ? await remoteJson<AppMe>(remoteSession, "/me")
       : undefined;
     if (remoteSession && remoteMe) {
-      const target = `@${remoteMe.username} · ${remoteSession.apiUrl} · app ${remoteSession.appId}`;
+      const target = `@${remoteMe.username} · profile ${remoteSession.profile} · ${remoteSession.apiUrl} · app ${remoteSession.appId}`;
       if (development.mode === "connected") {
         console.warn(
           `[maypop] connected development: ${target}. App data and enabled capabilities are real; notifications are ${development.notifications}.`,
