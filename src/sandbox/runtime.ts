@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   closeSync,
   createReadStream,
@@ -21,6 +21,8 @@ import {
   type AppMe,
   type AppMember,
   type DevelopmentMode,
+  type SandboxMember,
+  type SandboxRole,
   RemoteAppSession,
   loadDevelopmentConfig,
   mintDevelopmentSession,
@@ -34,7 +36,6 @@ import {
 } from "./notification-inspector.js";
 
 const MAX_BODY_BYTES = 51 * 1024 * 1024;
-const SANDBOX_SCOPES = "identity:read kv:read kv:write drive:read drive:write";
 export const SANDBOX_APP_QUERY = "__maypop_app";
 
 /** Remove the private iframe marker before application routing starts. */
@@ -77,6 +78,45 @@ type DriveFile = {
 
 type DriveData = { schemaVersion: 1; files: DriveFile[] };
 type SandboxIdentity = { schemaVersion: 1; appId: string; viewerId: string };
+
+type MockMcpTool = {
+  name: string;
+  description: string;
+  inputSchema: Record<string, JsonValue>;
+  result?: JsonValue;
+};
+
+type MockMcpServer = {
+  id: string;
+  name: string;
+  url: string;
+  account: string | null;
+  tools: MockMcpTool[];
+};
+
+type MockMcpData = { schemaVersion: 1; servers: MockMcpServer[] };
+
+type KvPolicyAction = "read" | "create" | "update" | "delete" | "sync";
+type KvPolicyRole = "guest" | "user" | "admin" | "owner";
+type KvPolicyOwner =
+  | { source: "entryAuthor" }
+  | { source: "jsonPointer"; pointer: string };
+type KvPolicyRule = {
+  actions: KvPolicyAction[];
+  roles: KvPolicyRole[];
+  key: string;
+  owner?: KvPolicyOwner;
+};
+type KvPolicyManifest = {
+  schemaVersion: 1;
+  mode?:
+    | "shared_group_data"
+    | "owner_private"
+    | "group_read_admin_write"
+    | "governed"
+    | "advanced";
+  rules?: KvPolicyRule[];
+};
 
 class HttpError extends Error {
   constructor(
@@ -137,6 +177,289 @@ async function readJson<T>(path: string, fallback: T): Promise<T> {
       cause: error,
     });
   }
+}
+
+function fixtureId(appId: string, member: SandboxMember, index: number): string {
+  if (member.id) return member.id;
+  const hex = createHash("sha256")
+    .update(`${appId}\0${index}\0${member.username}`)
+    .digest("hex")
+    .slice(0, 32)
+    .split("");
+  hex[12] = "4";
+  hex[16] = ["8", "9", "a", "b"][Number.parseInt(hex[16]!, 16) % 4]!;
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ]
+    .map((part) => part.join(""))
+    .join("-");
+}
+
+function sandboxScopes(role: SandboxRole, anonymous: boolean): Set<string> {
+  const scopes = new Set([
+    "identity:read",
+    "group:read",
+    "kv:read",
+    "drive:read",
+  ]);
+  if (!anonymous && role !== "reader") {
+    scopes.add("kv:write");
+    scopes.add("drive:write");
+  }
+  return scopes;
+}
+
+function validateMockMcp(path: string, value: unknown): MockMcpData {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Invalid Maypop MCP fixtures at ${path}: expected an object`);
+  }
+  const data = value as Partial<MockMcpData>;
+  if (data.schemaVersion !== 1 || !Array.isArray(data.servers)) {
+    throw new Error(
+      `Invalid Maypop MCP fixtures at ${path}: expected schemaVersion 1 and a servers array`,
+    );
+  }
+  for (const [serverIndex, server] of data.servers.entries()) {
+    if (
+      typeof server?.id !== "string" ||
+      !server.id ||
+      typeof server.name !== "string" ||
+      !server.name ||
+      typeof server.url !== "string" ||
+      !server.url ||
+      !Array.isArray(server.tools)
+    ) {
+      throw new Error(
+        `Invalid Maypop MCP fixtures at ${path}: server ${serverIndex + 1} is incomplete`,
+      );
+    }
+    for (const [toolIndex, tool] of server.tools.entries()) {
+      if (
+        typeof tool?.name !== "string" ||
+        !tool.name ||
+        typeof tool.description !== "string" ||
+        typeof tool.inputSchema !== "object" ||
+        tool.inputSchema === null ||
+        Array.isArray(tool.inputSchema)
+      ) {
+        throw new Error(
+          `Invalid Maypop MCP fixtures at ${path}: tool ${toolIndex + 1} on server ${server.id} is incomplete`,
+        );
+      }
+    }
+  }
+  return data as MockMcpData;
+}
+
+const KV_ACTIONS: KvPolicyAction[] = [
+  "read",
+  "create",
+  "update",
+  "delete",
+  "sync",
+];
+const KV_ROLES: KvPolicyRole[] = ["guest", "user", "admin", "owner"];
+
+function presetKvRules(
+  mode: NonNullable<KvPolicyManifest["mode"]>,
+): KvPolicyRule[] {
+  const memberRoles: KvPolicyRole[] = ["user", "admin", "owner"];
+  const adminRoles: KvPolicyRole[] = ["admin", "owner"];
+  const read: KvPolicyAction[] = ["read", "sync"];
+  const write: KvPolicyAction[] = ["create", "update", "delete"];
+  const guestRead: KvPolicyRule = {
+    actions: read,
+    roles: ["guest"],
+    key: "**",
+  };
+  if (mode === "shared_group_data") {
+    return [
+      { actions: KV_ACTIONS, roles: memberRoles, key: "**" },
+      guestRead,
+    ];
+  }
+  if (mode === "owner_private") {
+    return [
+      {
+        actions: KV_ACTIONS,
+        roles: memberRoles,
+        key: "private/{memberId}/**",
+      },
+    ];
+  }
+  if (mode === "group_read_admin_write" || mode === "governed") {
+    return [
+      { actions: read, roles: memberRoles, key: "**" },
+      { actions: write, roles: adminRoles, key: "**" },
+      guestRead,
+    ];
+  }
+  return [];
+}
+
+function validateKvPolicy(path: string, value: unknown): KvPolicyRule[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Invalid Maypop KV policy at ${path}: expected an object`);
+  }
+  const manifest = value as KvPolicyManifest;
+  const modes = [
+    "shared_group_data",
+    "owner_private",
+    "group_read_admin_write",
+    "governed",
+    "advanced",
+  ];
+  if (
+    manifest.schemaVersion !== 1 ||
+    (manifest.mode != null && !modes.includes(manifest.mode)) ||
+    (manifest.rules != null && !Array.isArray(manifest.rules))
+  ) {
+    throw new Error(`Invalid Maypop KV policy at ${path}`);
+  }
+  const explicit = manifest.rules ?? [];
+  if (manifest.mode && manifest.mode !== "advanced") {
+    if (explicit.length > 0) {
+      throw new Error(
+        `Invalid Maypop KV policy at ${path}: preset policies cannot declare rules`,
+      );
+    }
+    return presetKvRules(manifest.mode);
+  }
+  if (explicit.length > 128) {
+    throw new Error(`Invalid Maypop KV policy at ${path}: too many rules`);
+  }
+  for (const [index, rule] of explicit.entries()) {
+    const segments = typeof rule?.key === "string" ? rule.key.split("/") : [];
+    if (
+      !Array.isArray(rule?.actions) ||
+      rule.actions.length === 0 ||
+      rule.actions.some((action) => !KV_ACTIONS.includes(action)) ||
+      !Array.isArray(rule.roles) ||
+      rule.roles.length === 0 ||
+      rule.roles.some((policyRole) => !KV_ROLES.includes(policyRole)) ||
+      typeof rule.key !== "string" ||
+      !rule.key ||
+      Buffer.byteLength(rule.key) > 1_024 ||
+      segments.some(
+        (segment, segmentIndex) =>
+          !segment ||
+          segment === "." ||
+          segment === ".." ||
+          (segment === "**" && segmentIndex !== segments.length - 1) ||
+          (segment !== "*" &&
+            segment !== "**" &&
+            segment !== "{memberId}" &&
+            (segment.includes("{") ||
+              segment.includes("}") ||
+              [...segment].some((character) =>
+                /[\u0000-\u001f\u007f-\u009f]/.test(character),
+              )))
+      )
+    ) {
+      throw new Error(
+        `Invalid Maypop KV policy at ${path}: invalid rule ${index + 1}`,
+      );
+    }
+    if (
+      rule.owner != null &&
+      (typeof rule.owner !== "object" ||
+        !["entryAuthor", "jsonPointer"].includes(rule.owner.source) ||
+        (rule.owner.source === "jsonPointer" &&
+          (typeof rule.owner.pointer !== "string" ||
+            !rule.owner.pointer.startsWith("/"))))
+    ) {
+      throw new Error(
+        `Invalid Maypop KV policy at ${path}: invalid owner in rule ${index + 1}`,
+      );
+    }
+  }
+  return explicit;
+}
+
+function policyRole(role: SandboxRole): KvPolicyRole {
+  return { reader: "guest", writer: "user", editor: "admin", admin: "owner" }[
+    role
+  ] as KvPolicyRole;
+}
+
+function keyMatches(pattern: string, key: string, memberId: string): boolean {
+  const expected = pattern.split("/");
+  const actual = key.split("/");
+  for (let index = 0; index < expected.length; index += 1) {
+    const segment = expected[index]!;
+    if (segment === "**") return true;
+    const value = actual[index];
+    if (value == null) return false;
+    if (segment === "*") continue;
+    if (segment === "{memberId}") {
+      if (value !== memberId) return false;
+      continue;
+    }
+    if (segment !== value) return false;
+  }
+  return actual.length === expected.length;
+}
+
+function jsonPointer(value: JsonValue, pointer: string): unknown {
+  let current: unknown = value;
+  for (const encoded of pointer.split("/").slice(1)) {
+    const segment = encoded.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (Array.isArray(current)) {
+      const index = Number(segment);
+      if (!Number.isSafeInteger(index)) return undefined;
+      current = current[index];
+    } else if (typeof current === "object" && current !== null) {
+      current = (current as Record<string, unknown>)[segment];
+    } else {
+      return undefined;
+    }
+  }
+  return current;
+}
+
+function ownerMatches(
+  owner: KvPolicyOwner | undefined,
+  action: KvPolicyAction,
+  viewerId: string,
+  current: KvEntry | undefined,
+  proposed: KvEntry | undefined,
+): boolean {
+  if (!owner) return true;
+  const recordMatches = (record: KvEntry | undefined): boolean => {
+    if (!record) return false;
+    return owner.source === "entryAuthor"
+      ? record.author === viewerId
+      : jsonPointer(record.value, owner.pointer) === viewerId;
+  };
+  if (action === "create") return recordMatches(proposed);
+  if (action === "update") {
+    return recordMatches(current) && recordMatches(proposed);
+  }
+  return recordMatches(current);
+}
+
+function kvPolicyAllows(
+  rules: KvPolicyRule[] | undefined,
+  action: KvPolicyAction,
+  key: string,
+  viewerId: string,
+  role: SandboxRole,
+  current?: KvEntry,
+  proposed?: KvEntry,
+): boolean {
+  if (!rules) return true;
+  const principal = policyRole(role);
+  return rules.some(
+    (rule) =>
+      rule.actions.includes(action) &&
+      rule.roles.includes(principal) &&
+      keyMatches(rule.key, key, viewerId) &&
+      ownerMatches(rule.owner, action, viewerId, current, proposed),
+  );
 }
 
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
@@ -257,6 +580,7 @@ function sandboxHtml(
   identity: SandboxIdentity,
   token: string,
   scopes: string,
+  signInRequired: boolean,
   mode: DevelopmentMode,
   appRequestToken: string,
   kvPullIntervalMs: number | undefined,
@@ -268,6 +592,7 @@ function sandboxHtml(
     mode,
     token,
     scopes,
+    signInRequired,
   }).replaceAll("<", "\\u003c");
 
   return `<!doctype html>
@@ -288,6 +613,16 @@ function sandboxHtml(
         background: rgb(10 10 10 / 78%); backdrop-filter: blur(10px);
         font-size: 11px; text-decoration: none;
       }
+      dialog {
+        width: min(520px, calc(100vw - 32px)); border: 1px solid rgb(255 255 255 / 18%);
+        border-radius: 16px; color: #f5f5f5; background: #181818; box-shadow: 0 24px 80px rgb(0 0 0 / 55%);
+      }
+      dialog::backdrop { background: rgb(0 0 0 / 55%); }
+      dialog h1 { margin: 0 0 8px; font: 600 18px/1.3 ui-sans-serif, system-ui, sans-serif; }
+      dialog p { margin: 0 0 16px; color: #aaa; font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; }
+      dialog a { display: block; overflow-wrap: anywhere; color: #fff; }
+      dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 20px 0 0; padding: 0; }
+      dialog button { border: 1px solid #444; border-radius: 9px; padding: 8px 12px; color: #fff; background: #282828; cursor: pointer; }
     </style>
   </head>
   <body>
@@ -298,10 +633,22 @@ function sandboxHtml(
       allow="autoplay; clipboard-read; clipboard-write; encrypted-media; fullscreen; geolocation; microphone; camera; display-capture; accelerometer; gyroscope; magnetometer"
     ></iframe>
     <a id="badge" href="/_maypop/notifications" target="_blank" rel="noreferrer">Maypop development</a>
+    <dialog id="share-card">
+      <h1 id="share-title">Share local app</h1>
+      <p>This development link opens the same local framework host. It is not a published Maypop link.</p>
+      <a id="share-link" target="_blank" rel="noreferrer"></a>
+      <menu>
+        <button id="share-copy" type="button">Copy link</button>
+        <button id="share-close" type="button">Close</button>
+      </menu>
+    </dialog>
     <script>
       const config = ${config};
       const frame = document.getElementById("app");
       const badge = document.getElementById("badge");
+      const shareCard = document.getElementById("share-card");
+      const shareTitle = document.getElementById("share-title");
+      const shareLink = document.getElementById("share-link");
       let port = null;
 
       const theme = () => matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -315,6 +662,12 @@ function sandboxHtml(
         } catch {}
       };
 
+      const session = () => fetch("/_maypop/session", { cache: "no-store" })
+        .then((response) => {
+          if (!response.ok) throw new Error("session refresh failed (" + response.status + ")");
+          return response.json();
+        });
+
       function connect() {
         if (!frame.contentWindow) return;
         port?.close();
@@ -323,18 +676,43 @@ function sandboxHtml(
         port.onmessage = (event) => {
           if (event.data?.type === "maypop:ready") badge.textContent = "Maypop " + config.mode + " · connected";
           if (event.data?.type === "maypop:refresh") {
-            fetch("/_maypop/session", { cache: "no-store" })
-              .then((response) => {
-                if (!response.ok) throw new Error("session refresh failed (" + response.status + ")");
-                return response.json();
-              })
+            session()
               .then((session) => port.postMessage({ type: "maypop:token", ...session }))
               .catch(() => port.postMessage({ type: "maypop:revoked" }));
+          }
+          if (event.data?.type === "maypop:sign-in") {
+            fetch("/_maypop/sign-in", { method: "POST" })
+              .then((response) => {
+                if (!response.ok) throw new Error("local sign-in is not available");
+                frame.contentWindow?.location.reload();
+              })
+              .catch(() => {});
+            return;
+          }
+          if (event.data?.type === "maypop:share" && event.data?.id != null) {
+            const path = typeof event.data.path === "string" ? event.data.path : "";
+            if (!path.startsWith("/") || path.startsWith("//") || path.includes("\\\\")) {
+              port.postMessage({
+                type: "maypop:share-error",
+                id: event.data.id,
+                code: "maypop/invalid-path",
+                error: "share path must be site-relative",
+              });
+              return;
+            }
+            const link = new URL(path, location.origin).href;
+            shareTitle.textContent = typeof event.data.title === "string" && event.data.title.trim()
+              ? event.data.title.trim()
+              : "Share local app";
+            shareLink.href = link;
+            shareLink.textContent = link;
+            if (!shareCard.open) shareCard.showModal();
+            port.postMessage({ type: "maypop:share-done", id: event.data.id });
+            return;
           }
           const unsupportedReplies = {
             "maypop:open-app": "maypop:open-app-error",
             "maypop:open-group-settings": "maypop:open-group-settings-error",
-            "maypop:share": "maypop:share-error",
           };
           const replyType = unsupportedReplies[event.data?.type];
           if (replyType && event.data?.id != null) {
@@ -347,15 +725,19 @@ function sandboxHtml(
           }
         };
         port.start();
-        frame.contentWindow.postMessage({
-          type: "maypop:init",
-          context: {
-            appId: config.appId,
-            apiBase: location.origin,
-            kvPullIntervalMs: config.kvPullIntervalMs,
-          },
-          token: { token: config.token, expiresIn: 86400, scopes: config.scopes },
-        }, location.origin, [channel.port2]);
+        session().catch(() => config).then((current) => {
+          if (port !== channel.port1 || !frame.contentWindow) return;
+          frame.contentWindow.postMessage({
+            type: "maypop:init",
+            context: {
+              appId: config.appId,
+              apiBase: location.origin,
+              kvPullIntervalMs: config.kvPullIntervalMs,
+            },
+            token: { token: current.token, expiresIn: current.expiresIn ?? 86400, scopes: current.scopes },
+            signInRequired: current.signInRequired === true,
+          }, location.origin, [channel.port2]);
+        });
         postTheme();
       }
 
@@ -367,6 +749,10 @@ function sandboxHtml(
         connect();
       });
       matchMedia("(prefers-color-scheme: dark)").addEventListener("change", postTheme);
+      document.getElementById("share-close").addEventListener("click", () => shareCard.close());
+      document.getElementById("share-copy").addEventListener("click", async () => {
+        await navigator.clipboard.writeText(shareLink.href);
+      });
       const appUrl = new URL(location.href);
       appUrl.searchParams.set("${SANDBOX_APP_QUERY}", config.appRequestToken);
       frame.src = appUrl.pathname + appUrl.search + appUrl.hash;
@@ -585,6 +971,68 @@ export async function createMaypopSandboxRuntime(
       : localIdentity!;
     const token = randomBytes(32).toString("base64url");
     const appRequestToken = randomBytes(18).toString("base64url");
+    let sandboxSignedIn = development.viewer?.anonymous !== true;
+    const mockMcpPath = join(dataDirectory, "mcp.json");
+    const emptyMockMcp: MockMcpData = { schemaVersion: 1, servers: [] };
+    const mockMcp =
+      development.mode === "connected"
+        ? emptyMockMcp
+        : validateMockMcp(
+            mockMcpPath,
+            await readJson<unknown>(mockMcpPath, emptyMockMcp),
+          );
+    const kvPolicyPath = resolve(root, ".maypop/kv-policy.json");
+    const rawKvPolicy = development.strictStorage
+      ? await readJson<unknown | null>(kvPolicyPath, null)
+      : null;
+    const kvPolicyRules =
+      rawKvPolicy == null ? undefined : validateKvPolicy(kvPolicyPath, rawKvPolicy);
+
+    function activeSandboxViewer(): {
+      username: string;
+      role: SandboxRole;
+      avatarUrl: string | null;
+      anonymous: boolean;
+      signInRequired: boolean;
+    } {
+      const configured = development.viewer;
+      if (!configured) {
+        return {
+          username: options.username ?? "Developer",
+          role: "admin",
+          avatarUrl: null,
+          anonymous: false,
+          signInRequired: false,
+        };
+      }
+      if (configured.anonymous && sandboxSignedIn) {
+        return {
+          username: configured.signedInUsername,
+          role: configured.signedInRole,
+          avatarUrl: configured.avatarUrl,
+          anonymous: false,
+          signInRequired: false,
+        };
+      }
+      return {
+        username: configured.username,
+        role: configured.role,
+        avatarUrl: configured.avatarUrl,
+        anonymous: configured.anonymous,
+        signInRequired:
+          configured.anonymous && configured.signInGrantsWrite,
+      };
+    }
+
+    function localDataRole(): SandboxRole {
+      if (development.mode === "sandbox") return activeSandboxViewer().role;
+      return (["reader", "writer", "editor", "admin"] as const).includes(
+        remoteMe?.role as SandboxRole,
+      )
+        ? (remoteMe!.role as SandboxRole)
+        : "reader";
+    }
+
     function developmentScopes(): string {
       const remoteScopeSet = new Set(
         remoteSession?.scopes.split(/\s+/).filter(Boolean),
@@ -592,8 +1040,12 @@ export async function createMaypopSandboxRuntime(
       const scopeSet =
         development.mode === "connected"
           ? remoteScopeSet
-          : new Set(SANDBOX_SCOPES.split(" "));
-      if (development.mode === "sandbox") scopeSet.add("group:read");
+          : development.mode === "sandbox"
+            ? sandboxScopes(
+                activeSandboxViewer().role,
+                activeSandboxViewer().anonymous,
+              )
+            : sandboxScopes("admin", false);
       if (development.mode === "hybrid") {
         if (
           development.remoteCapabilities.includes("ai") &&
@@ -602,15 +1054,29 @@ export async function createMaypopSandboxRuntime(
           scopeSet.add("ai:use");
         }
         if (
-          development.remoteCapabilities.includes("members") &&
+          (development.remoteCapabilities.includes("members") ||
+            development.remoteCapabilities.includes("multiplayer")) &&
           remoteScopeSet.has("group:read")
         ) {
           scopeSet.add("group:read");
         }
+        if (development.remoteCapabilities.includes("multiplayer")) {
+          for (const scope of ["mp:list", "mp:create", "mp:join"]) {
+            if (remoteScopeSet.has(scope)) scopeSet.add(scope);
+          }
+        }
       }
-      if (development.notifications === "inspect") scopeSet.add("notify:send");
+      if (
+        development.notifications === "inspect" &&
+        (development.mode !== "sandbox" ||
+          (!activeSandboxViewer().anonymous &&
+            activeSandboxViewer().role !== "reader"))
+      ) {
+        scopeSet.add("notify:send");
+      }
       if (development.notifications === "disabled")
         scopeSet.delete("notify:send");
+      if (mockMcp.servers.length > 0) scopeSet.add("mcp:use");
       return [...scopeSet].join(" ");
     }
     const initialScopes = developmentScopes();
@@ -687,13 +1153,33 @@ export async function createMaypopSandboxRuntime(
     const pokeClients = new Set<ServerResponse>();
     const remoteControllers = new Set<AbortController>();
 
-    const localMember = (): AppMember => ({
-      id: identity.viewerId,
-      username: options.username ?? "Developer",
-      role: "admin",
-      avatarUrl: null,
-      connected: true,
-    });
+    const localMember = (): AppMe => {
+      const viewer = activeSandboxViewer();
+      return {
+        id: identity.viewerId,
+        username: viewer.username,
+        role: viewer.role,
+        avatarUrl: viewer.avatarUrl,
+        connected: true,
+        isAnonymous: viewer.anonymous,
+        scopes: developmentScopes(),
+      };
+    };
+
+    const localMembers = (): AppMember[] => {
+      const { isAnonymous: _isAnonymous, scopes: _scopes, ...viewer } =
+        localMember();
+      return [
+        viewer,
+        ...development.members.map((member, index) => ({
+          id: fixtureId(identity.appId, member, index),
+          username: member.username,
+          role: member.role,
+          avatarUrl: member.avatarUrl,
+          connected: member.connected,
+        })),
+      ].sort((left, right) => left.username.localeCompare(right.username));
+    };
 
     async function currentViewer(): Promise<AppMe | AppMember> {
       return remoteSession
@@ -705,7 +1191,8 @@ export async function createMaypopSandboxRuntime(
       if (
         remoteSession &&
         (development.mode === "connected" ||
-          development.remoteCapabilities.includes("members"))
+          development.remoteCapabilities.includes("members") ||
+          development.remoteCapabilities.includes("multiplayer"))
       ) {
         const result = await remoteJson<{
           members: AppMember[];
@@ -713,11 +1200,17 @@ export async function createMaypopSandboxRuntime(
         }>(remoteSession, "/members");
         return result.members;
       }
-      return [localMember()];
+      return localMembers();
     }
 
     function poke(): void {
       for (const response of pokeClients) response.write("data: poke\n\n");
+    }
+
+    function requireDevelopmentScope(scope: string): void {
+      if (!developmentScopes().split(/\s+/).includes(scope)) {
+        throw new HttpError(403, `missing scope for ${scope}`);
+      }
     }
 
     async function handle(
@@ -753,6 +1246,25 @@ export async function createMaypopSandboxRuntime(
           token,
           expiresIn: 86_400,
           scopes: developmentScopes(),
+          signInRequired:
+            development.mode === "sandbox" &&
+            activeSandboxViewer().signInRequired,
+        });
+        return;
+      }
+      if (method === "POST" && url.pathname === "/_maypop/sign-in") {
+        if (
+          development.mode !== "sandbox" ||
+          !activeSandboxViewer().signInRequired
+        ) {
+          throw new HttpError(409, "local sign-in is not available");
+        }
+        sandboxSignedIn = true;
+        sendJson(response, {
+          token,
+          expiresIn: 86_400,
+          scopes: developmentScopes(),
+          signInRequired: false,
         });
         return;
       }
@@ -767,6 +1279,8 @@ export async function createMaypopSandboxRuntime(
             identity,
             token,
             initialScopes,
+            development.mode === "sandbox" &&
+              activeSandboxViewer().signInRequired,
             development.mode,
             appRequestToken,
             options.kvPullIntervalMs,
@@ -782,6 +1296,39 @@ export async function createMaypopSandboxRuntime(
         });
         createReadStream(
           fileURLToPath(new URL("./kv-v1.js", import.meta.url)),
+        ).pipe(response);
+        return;
+      }
+
+      if (method === "GET" && url.pathname === "/sdk/agent-v1.js") {
+        response.writeHead(200, {
+          "Cache-Control": "no-store",
+          "Content-Type": "text/javascript; charset=utf-8",
+        });
+        createReadStream(
+          fileURLToPath(new URL("./agent-v1.js", import.meta.url)),
+        ).pipe(response);
+        return;
+      }
+
+      if (method === "GET" && url.pathname === "/sdk/iroh-v1.js") {
+        response.writeHead(200, {
+          "Cache-Control": "no-store",
+          "Content-Type": "text/javascript; charset=utf-8",
+        });
+        createReadStream(
+          fileURLToPath(new URL("./iroh-v1.js", import.meta.url)),
+        ).pipe(response);
+        return;
+      }
+
+      if (method === "GET" && url.pathname === "/sdk/iroh-v1_bg.wasm") {
+        response.writeHead(200, {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/wasm",
+        });
+        createReadStream(
+          fileURLToPath(new URL("./iroh-v1_bg.wasm", import.meta.url)),
         ).pipe(response);
         return;
       }
@@ -868,7 +1415,6 @@ export async function createMaypopSandboxRuntime(
         const viewer = await currentViewer();
         sendJson(response, {
           ...viewer,
-          isAnonymous: false,
           scopes: developmentScopes(),
         });
         return;
@@ -880,6 +1426,7 @@ export async function createMaypopSandboxRuntime(
         }
         if (development.notifications === "inspect") {
           if (method !== "POST") throw new HttpError(405, "method not allowed");
+          requireDevelopmentScope("notify:send");
           const body = await readJsonBody<{
             to?: "all" | string[];
             title?: unknown;
@@ -973,7 +1520,10 @@ export async function createMaypopSandboxRuntime(
           (url.pathname.startsWith("/app-api/ai/") &&
             development.remoteCapabilities.includes("ai")) ||
           (url.pathname === "/app-api/members" &&
-            development.remoteCapabilities.includes("members")) ||
+            (development.remoteCapabilities.includes("members") ||
+              development.remoteCapabilities.includes("multiplayer"))) ||
+          (url.pathname.startsWith("/app-api/multiplayer/") &&
+            development.remoteCapabilities.includes("multiplayer")) ||
           (url.pathname === "/app-api/unfurl" &&
             development.remoteCapabilities.includes("link"));
         if (remoteCapability) {
@@ -989,8 +1539,62 @@ export async function createMaypopSandboxRuntime(
         }
       }
 
+      if (
+        mockMcp.servers.length > 0 &&
+        url.pathname.startsWith("/app-api/mcp/")
+      ) {
+        requireDevelopmentScope("mcp:use");
+        if (method === "GET" && url.pathname === "/app-api/mcp/servers") {
+          sendJson(response, {
+            servers: mockMcp.servers.map(({ tools: _tools, ...server }) => server),
+          });
+          return;
+        }
+        if (method === "POST" && url.pathname === "/app-api/mcp/tools/list") {
+          const body = await readJsonBody<{ serverId?: unknown }>(request);
+          const server = mockMcp.servers.find(
+            (candidate) => candidate.id === body.serverId,
+          );
+          if (!server) throw new HttpError(404, "MCP server not found");
+          sendJson(response, {
+            tools: server.tools.map(({ result: _result, ...tool }) => tool),
+          });
+          return;
+        }
+        if (method === "POST" && url.pathname === "/app-api/mcp/tools/call") {
+          const body = await readJsonBody<{
+            serverId?: unknown;
+            name?: unknown;
+            arguments?: JsonValue;
+          }>(request);
+          const server = mockMcp.servers.find(
+            (candidate) => candidate.id === body.serverId,
+          );
+          const tool = server?.tools.find(
+            (candidate) => candidate.name === body.name,
+          );
+          if (!tool) throw new HttpError(404, "MCP tool not found");
+          sendJson(
+            response,
+            tool.result ?? {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(body.arguments ?? {}),
+                },
+              ],
+              structuredContent: body.arguments ?? {},
+            },
+          );
+          return;
+        }
+      }
+
       if (method === "GET" && url.pathname === "/app-api/members") {
-        sendJson(response, { members: [localMember()], guestCount: 0 });
+        sendJson(response, {
+          members: localMembers(),
+          guestCount: development.guestCount,
+        });
         return;
       }
 
@@ -1015,6 +1619,16 @@ export async function createMaypopSandboxRuntime(
             : [
                 { op: "clear" },
                 ...Object.entries(kv.value.entries)
+                  .filter(([key, value]) =>
+                    kvPolicyAllows(
+                      kvPolicyRules,
+                      "sync",
+                      key,
+                      identity.viewerId,
+                      localDataRole(),
+                      value,
+                    ),
+                  )
                   .sort(([left], [right]) => left.localeCompare(right))
                   .map(([key, value]) => ({ op: "put", key, value })),
               ];
@@ -1032,6 +1646,7 @@ export async function createMaypopSandboxRuntime(
       }
 
       if (method === "POST" && url.pathname === "/app-api/kv/push") {
+        requireDevelopmentScope("kv:write");
         const body = await readJsonBody<{
           mutations?: Array<{
             id: number;
@@ -1050,14 +1665,50 @@ export async function createMaypopSandboxRuntime(
             if (typeof mutation.args?.key !== "string") {
               throw new HttpError(400, "invalid KV key");
             }
+            const key = mutation.args.key;
+            if (Buffer.byteLength(key) > 1_024) {
+              throw new HttpError(400, "KV key exceeds 1024 bytes");
+            }
+            const current = data.entries[key];
             if (mutation.name === "set") {
-              data.entries[mutation.args.key] = {
-                value: mutation.args.value ?? null,
+              const value = mutation.args.value ?? null;
+              if (Buffer.byteLength(JSON.stringify(value)) > 256 * 1_024) {
+                throw new HttpError(400, "KV value exceeds 262144 bytes");
+              }
+              const proposed: KvEntry = {
+                value,
                 author: identity.viewerId,
                 updatedAt: new Date().toISOString(),
               };
+              const action: KvPolicyAction = current ? "update" : "create";
+              if (
+                !kvPolicyAllows(
+                  kvPolicyRules,
+                  action,
+                  key,
+                  identity.viewerId,
+                  localDataRole(),
+                  current,
+                  proposed,
+                )
+              ) {
+                throw new HttpError(403, `KV policy denied ${action} for ${key}`);
+              }
+              data.entries[key] = proposed;
             } else if (mutation.name === "del") {
-              delete data.entries[mutation.args.key];
+              if (
+                !kvPolicyAllows(
+                  kvPolicyRules,
+                  "delete",
+                  key,
+                  identity.viewerId,
+                  localDataRole(),
+                  current,
+                )
+              ) {
+                throw new HttpError(403, `KV policy denied delete for ${key}`);
+              }
+              delete data.entries[key];
             } else {
               throw new HttpError(400, `unknown KV mutation: ${mutation.name}`);
             }
@@ -1083,6 +1734,7 @@ export async function createMaypopSandboxRuntime(
       }
 
       if (method === "POST" && url.pathname === "/app-api/drive/presign") {
+        requireDevelopmentScope("drive:write");
         const cid = randomUUID();
         sendJson(response, {
           cid,
@@ -1093,6 +1745,7 @@ export async function createMaypopSandboxRuntime(
       }
 
       if (method === "POST" && url.pathname === "/app-api/drive/confirm") {
+        requireDevelopmentScope("drive:write");
         const body = await readJsonBody<{
           cid?: string;
           name?: unknown;
@@ -1148,6 +1801,7 @@ export async function createMaypopSandboxRuntime(
           return;
         }
         if (method === "DELETE") {
+          requireDevelopmentScope("drive:write");
           const removed = drive.value.files.filter(
             (file) => file.name === name,
           );
@@ -1181,6 +1835,7 @@ export async function createMaypopSandboxRuntime(
           return;
         }
         if (method === "DELETE") {
+          requireDevelopmentScope("drive:write");
           await drive.update((data) => {
             data.files = data.files.filter(
               (candidate) => candidate.cid !== cid,

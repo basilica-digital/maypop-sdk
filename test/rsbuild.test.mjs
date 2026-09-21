@@ -50,6 +50,16 @@ test("the Rsbuild plugin wraps the real development server", async () => {
     assert.equal(app.status, 200);
     assert.match(appHtml, /history\.replaceState/);
     assert.match(appHtml, /static\/js/);
+
+    const agentRuntime = await fetch(`${url}/sdk/agent-v1.js`);
+    assert.equal(agentRuntime.status, 200);
+    assert.match(agentRuntime.headers.get("content-type"), /javascript/);
+    await agentRuntime.arrayBuffer();
+
+    const multiplayerWasm = await fetch(`${url}/sdk/iroh-v1_bg.wasm`);
+    assert.equal(multiplayerWasm.status, 200);
+    assert.equal(multiplayerWasm.headers.get("content-type"), "application/wasm");
+    await multiplayerWasm.arrayBuffer();
   } finally {
     await started.server.close();
     await rm(root, { recursive: true, force: true });
