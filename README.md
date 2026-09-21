@@ -195,6 +195,16 @@ service worker, declarations, and backend artifacts into the ignored `dist/`
 directory. Generated JavaScript is never a source of truth and should not be
 edited directly.
 
+The Iroh runtime lives in `iroh/`; its generated bindings and WebAssembly are
+committed under `iroh/prebuilt/` so ordinary package builds do not require a
+Rust/Wasm toolchain. After changing `iroh/src`, install the
+`wasm32-unknown-unknown` target, `wasm-bindgen-cli` matching the crate's pinned
+version, and Binaryen's `wasm-opt`, then run:
+
+```sh
+just build-iroh
+```
+
 ## Release
 
 Versions follow SemVer and tags use the matching `vX.Y.Z` form. Before tagging,
