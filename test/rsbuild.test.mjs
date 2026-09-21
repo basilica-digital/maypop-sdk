@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { createRsbuild } from "@rsbuild/core";
-import { maypop } from "maypop-sdk/rsbuild";
+import { maypop } from "@basilica-digital/maypop-sdk/rsbuild";
 
 function readSandboxConfigValue(html, name) {
   const match = html.match(new RegExp(`"${name}":"([^"]+)"`));

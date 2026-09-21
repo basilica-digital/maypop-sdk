@@ -7,7 +7,7 @@ import {
   MaypopProvider,
   useMaypopKV,
   useMaypopSession,
-} from "maypop-sdk/react";
+} from "@basilica-digital/maypop-sdk/react";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 

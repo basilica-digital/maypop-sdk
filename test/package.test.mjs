@@ -67,7 +67,7 @@ test("the package export is the hosted window.maypop object", async () => {
     window: { configurable: true, value: window },
   });
 
-  const module = await import("maypop-sdk");
+  const module = await import("@basilica-digital/maypop-sdk");
 
   assert.equal(module.default, window.maypop);
   assert.equal(module.maypop, window.maypop);
@@ -116,7 +116,7 @@ test("server rendering can import the package but cannot use browser capabilitie
       "--input-type=module",
       "--eval",
       `
-        import { maypop } from "maypop-sdk";
+        import { maypop } from "@basilica-digital/maypop-sdk";
         try {
           maypop.ready;
           process.exitCode = 1;

@@ -5,7 +5,7 @@ export type Maypop = MaypopSdk;
 
 const browserOnly = (): never => {
   throw new Error(
-    "maypop-sdk is available in the browser after the Maypop host initializes it",
+    "@basilica-digital/maypop-sdk is available in the browser after the Maypop host initializes it",
   );
 };
 

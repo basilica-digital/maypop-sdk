@@ -8,14 +8,14 @@ typed `Maypop` contract.
 ## Install
 
 ```sh
-pnpm add maypop-sdk
+pnpm add @basilica-digital/maypop-sdk
 ```
 
 Import the SDK from browser code and wait for the Maypop host before using a
 capability:
 
 ```ts
-import { maypop } from "maypop-sdk";
+import { maypop } from "@basilica-digital/maypop-sdk";
 
 await maypop.ready();
 const todos = await maypop.kv.list({ prefix: "todo/" });
@@ -25,7 +25,7 @@ The default and named exports are the exact same object as `window.maypop`, so
 framework code and scripts can interoperate without adapters:
 
 ```ts
-import maypop, { type Maypop } from "maypop-sdk";
+import maypop, { type Maypop } from "@basilica-digital/maypop-sdk";
 
 function currentUser(sdk: Maypop = maypop) {
   return sdk.user;
@@ -47,7 +47,7 @@ import {
   useMaypopKV,
   useMaypopMode,
   useMaypopSession,
-} from "maypop-sdk/react";
+} from "@basilica-digital/maypop-sdk/react";
 
 export function Counter() {
   const session = useMaypopSession();
@@ -72,7 +72,7 @@ The hooks use the hosted SDK automatically. `MaypopProvider` is only needed to
 inject another client in a test or future local sandbox host:
 
 ```tsx
-import { MaypopProvider } from "maypop-sdk/react";
+import { MaypopProvider } from "@basilica-digital/maypop-sdk/react";
 
 <MaypopProvider client={sandboxClient}>
   <App />
@@ -86,7 +86,7 @@ import { MaypopProvider } from "maypop-sdk/react";
 Add the Maypop plugin to an existing Vite configuration:
 
 ```ts
-import { maypop } from "maypop-sdk/vite";
+import { maypop } from "@basilica-digital/maypop-sdk/vite";
 import { defineConfig } from "vite";
 
 export default defineConfig({
@@ -100,7 +100,7 @@ Add the equivalent plugin to an Rsbuild configuration:
 
 ```ts
 import { defineConfig } from "@rsbuild/core";
-import { maypop } from "maypop-sdk/rsbuild";
+import { maypop } from "@basilica-digital/maypop-sdk/rsbuild";
 
 export default defineConfig({
   plugins: [maypop()],
@@ -113,7 +113,7 @@ Wrap a Next.js configuration. The wrapper adds its sandbox proxy only to
 `next dev`; builds and production servers keep the original configuration:
 
 ```ts
-import { withMaypop } from "maypop-sdk/next";
+import { withMaypop } from "@basilica-digital/maypop-sdk/next";
 
 export default withMaypop({
   output: "export",
@@ -165,7 +165,7 @@ Existing apps can keep loading the global build:
 <script src="https://api.dev.maypop.ai/sdk/v1.js"></script>
 ```
 
-Importing `maypop-sdk` installs that same build from the package instead. Both
+Importing `@basilica-digital/maypop-sdk` installs that same build from the package instead. Both
 forms use the same host handshake and backend API, and both expose
 `window.maypop`. Do not use both forms in one app; the runtime is idempotent,
 but one is enough.
@@ -182,8 +182,9 @@ chunks, shell document, contracts, and Iroh WebAssembly runtime under `dist/`.
 The Maypop backend pins an exact package version and embeds these files into its
 binary, so a backend build never depends on the SDK repository's moving branch.
 
-The source contract and runtime are available through `maypop-sdk/source/v1`
-and `maypop-sdk/source/runtime` for Maypop's own contract tooling. Application
+The source contract and runtime are available through
+`@basilica-digital/maypop-sdk/source/v1` and
+`@basilica-digital/maypop-sdk/source/runtime` for Maypop's own contract tooling. Application
 code should use the public entry points shown above.
 
 ## Development

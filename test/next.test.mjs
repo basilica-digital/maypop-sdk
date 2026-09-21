@@ -4,7 +4,7 @@ import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { withMaypop } from "maypop-sdk/next";
+import { withMaypop } from "@basilica-digital/maypop-sdk/next";
 
 function readSandboxConfigValue(html, name) {
   const match = html.match(new RegExp(`"${name}":"([^"]+)"`));

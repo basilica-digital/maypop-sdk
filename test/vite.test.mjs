@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createServer as createViteServer } from "vite";
 
-import { maypop } from "maypop-sdk/vite";
+import { maypop } from "@basilica-digital/maypop-sdk/vite";
 
 function readSandboxConfigValue(html, name) {
   const match = html.match(new RegExp(`"${name}":"([^"]+)"`));
