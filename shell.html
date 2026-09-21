@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+    />
+    <!-- Dual theme-color so chrome matches OS before any JS runs. -->
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="#f6f3f0"
+    />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: dark)"
+      content="#08090b"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="{{APP_NAME}}" />
+    <!-- "black" = solid status bar (same as main Maypop PWA). Boot script
+         flips to "default" on light OS theme. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- Critical: paint OS-matched bg before body / later CSS (kills white flash). -->
+    <style>
+      html {
+        color-scheme: light;
+        background-color: #f6f3f0;
+      }
+      @media (prefers-color-scheme: dark) {
+        html {
+          color-scheme: dark;
+          background-color: #08090b;
+        }
+      }
+    </style>
+    <script>
+      (function () {
+        var dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var bg = dark ? "#08090b" : "#f6f3f0";
+        var root = document.documentElement;
+        root.style.colorScheme = dark ? "dark" : "light";
+        root.style.backgroundColor = bg;
+        var s = document.querySelector(
+          'meta[name="apple-mobile-web-app-status-bar-style"]',
+        );
+        if (s) s.setAttribute("content", dark ? "black" : "default");
+      })();
+    </script>
+    <link rel="manifest" href="{{APP_MOUNT}}/_maypop/manifest.webmanifest" />
+    <link rel="icon" href="{{APP_MOUNT}}/_maypop/icon" />
+    <link rel="apple-touch-icon" href="{{APP_MOUNT}}/_maypop/icon" />
+    <title>{{APP_NAME}}</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --shell-bg: #f6f3f0;
+        --shell-fg: #0c0a09;
+        --shell-muted: #78716c;
+        --shell-status: #57534e;
+        --install-bg: oklch(0.98 0.005 80 / 0.94);
+        --install-border: oklch(0 0 0 / 0.08);
+        --install-text: #44403c;
+        --install-shadow: 0 12px 40px oklch(0 0 0 / 0.12);
+        --install-btn-bg: #0c0a09;
+        --install-btn-fg: #fafaf9;
+        --install-dismiss: #78716c;
+        /* host.js sets --shell-height to the real visible height (innerHeight
+           / visualViewport). 100vh/dvh are wrong in iOS standalone PWAs. */
+        --shell-height: 100%;
+        --sat: env(safe-area-inset-top, 0px);
+        --sar: env(safe-area-inset-right, 0px);
+        --sab: env(safe-area-inset-bottom, 0px);
+        --sal: env(safe-area-inset-left, 0px);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --shell-bg: #08090b;
+          --shell-fg: #f5f5f4;
+          --shell-muted: #a8a29e;
+          --shell-status: #a8a29e;
+          --install-bg: oklch(0.22 0.01 60 / 0.94);
+          --install-border: oklch(1 0 0 / 0.08);
+          --install-text: #d6d3d1;
+          --install-shadow: 0 12px 40px oklch(0 0 0 / 0.45);
+          --install-btn-bg: #f5f5f4;
+          --install-btn-fg: #0c0a09;
+          --install-dismiss: #a8a29e;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        /* No overflow:hidden here: it propagates to the viewport, and iOS
+           black-translucent web clips mis-size the layout viewport (short
+           ICB) — clipping there would chop the screen-height frame-host
+           right back to the black strip. All children are fixed, so the
+           document has no scrollable overflow anyway. */
+        overscroll-behavior: none;
+        background: var(--shell-bg);
+        color: var(--shell-fg);
+        font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      }
+      #status {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        padding-top: calc(24px + var(--sat));
+        padding-bottom: calc(24px + var(--sab));
+        text-align: center;
+        font-size: 15px;
+        color: var(--shell-status);
+        pointer-events: none;
+        z-index: 1;
+      }
+      #status[hidden] {
+        display: none !important;
+      }
+      /*
+        Same contract as Maypop mobile (global-layout + fullscreen app overlay):
+          1. Host fills the real visible height (--shell-height from JS).
+          2. Padding by safe-area so shell-bg fills notch / home-indicator.
+          3. Iframe flexes into the remaining content box — never under chrome.
+      */
+      #frame-host {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: var(--shell-height);
+        padding-top: var(--sat);
+        padding-right: var(--sar);
+        padding-bottom: var(--sab);
+        padding-left: var(--sal);
+        display: flex;
+        flex-direction: column;
+        background: var(--shell-bg);
+        z-index: 0;
+      }
+      #app {
+        flex: 1 1 auto;
+        width: 100%;
+        min-height: 0;
+        border: 0;
+        background: var(--shell-bg);
+      }
+      #install,
+      #update {
+        position: fixed;
+        left: calc(12px + var(--sal));
+        right: calc(12px + var(--sar));
+        bottom: calc(12px + var(--sab));
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: var(--install-bg);
+        border: 1px solid var(--install-border);
+        box-shadow: var(--install-shadow);
+        backdrop-filter: blur(12px);
+      }
+      #update {
+        z-index: 3;
+      }
+      #install[hidden],
+      #update[hidden] {
+        display: none !important;
+      }
+      #install p,
+      #update p {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.4;
+        color: var(--install-text);
+      }
+      #install .row,
+      #update .row {
+        display: flex;
+        gap: 8px;
+      }
+      #install button,
+      #update button {
+        appearance: none;
+        border: 0;
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #install-btn,
+      #update-btn {
+        flex: 1;
+        background: var(--install-btn-bg);
+        color: var(--install-btn-fg);
+      }
+      #install-btn:active,
+      #update-btn:active {
+        transform: scale(0.98);
+      }
+      #install-dismiss,
+      #update-dismiss {
+        background: transparent;
+        color: var(--install-dismiss);
+      }
+      #install-dismiss:active,
+      #update-dismiss:active {
+        opacity: 0.7;
+      }
+      #install [data-ios] {
+        font-size: 12px;
+        color: var(--shell-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status">Opening…</div>
+    <div id="frame-host">
+      <iframe
+        id="app"
+        hidden
+        title="App"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-popups-to-escape-sandbox allow-downloads"
+        allow="autoplay; clipboard-read; clipboard-write; encrypted-media; fullscreen; geolocation; microphone; camera; display-capture; accelerometer; gyroscope; magnetometer"
+      ></iframe>
+    </div>
+    <div id="update" hidden>
+      <p>A new version of this app is available</p>
+      <div class="row">
+        <button type="button" id="update-btn">Refresh</button>
+        <button type="button" id="update-dismiss">Not now</button>
+      </div>
+    </div>
+    <div id="install" hidden>
+      <p>Add this app to your home screen for quick access.</p>
+      <p data-ios hidden>
+        On iPhone: tap Share, then <strong>Add to Home Screen</strong>.
+      </p>
+      <div class="row">
+        <button type="button" id="install-btn">Add to home screen</button>
+        <button type="button" id="install-dismiss">Not now</button>
+      </div>
+    </div>
+    <script>
+      window.__MAYPOP_SHELL__ = {
+        apiBase: "{{API_BASE}}",
+        // Subdomain hosts: ""; path mounts (Tailscale): "/__app/{label}".
+        mount: "{{APP_MOUNT}}",
+      };
+    </script>
+    <script src="{{APP_MOUNT}}/_maypop/host.js"></script>
+  </body>
+</html>

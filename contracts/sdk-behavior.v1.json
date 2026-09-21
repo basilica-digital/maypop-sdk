@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "identity": { "appId": "eval-app", "viewerId": "eval-user" },
+  "subscriptions": [{ "id": "empty-store", "prefix": "records/", "expected": [] }, { "id": "immediate-teardown", "prefix": "records/", "cancelImmediately": true, "expected": null }],
+  "cases": [
+    { "id": "readonly-kv-set", "operation": "kv.set", "arguments": ["records/one", { "value": 1 }], "error": "maypop/read-only" },
+    { "id": "readonly-kv-delete", "operation": "kv.delete", "arguments": ["records/one"], "error": "maypop/read-only" },
+    { "id": "readonly-drive-write", "operation": "drive.write", "arguments": ["notes.txt", "hello"], "error": "maypop/read-only" },
+    { "id": "readonly-notify", "operation": "notify", "arguments": [{ "to": "all", "title": "Hello" }], "error": "maypop/forbidden" }
+  ]
+}

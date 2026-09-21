@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "memberId": "00000000-0000-0000-0000-000000000001",
+  "userId": "00000000-0000-0000-0000-000000000002",
+  "cases": [
+    { "id": "empty-denies", "manifest": { "schemaVersion": 1, "rules": [] }, "role": "admin", "action": "sync", "key": "records/one", "allowed": false },
+    { "id": "shared-reader-can-sync", "manifest": { "schemaVersion": 1, "mode": "shared_group_data", "rules": [] }, "role": "reader", "action": "sync", "key": "records/one", "allowed": true },
+    { "id": "shared-reader-cannot-create", "manifest": { "schemaVersion": 1, "mode": "shared_group_data", "rules": [] }, "role": "reader", "action": "create", "key": "records/one", "allowed": false },
+    { "id": "shared-writer-can-create", "manifest": { "schemaVersion": 1, "mode": "shared_group_data", "rules": [] }, "role": "writer", "action": "create", "key": "records/one", "allowed": true },
+    { "id": "private-own-path", "manifest": { "schemaVersion": 1, "mode": "owner_private", "rules": [] }, "role": "writer", "action": "sync", "key": "private/00000000-0000-0000-0000-000000000001/one", "allowed": true },
+    { "id": "private-other-path", "manifest": { "schemaVersion": 1, "mode": "owner_private", "rules": [] }, "role": "admin", "action": "sync", "key": "private/00000000-0000-0000-0000-000000000003/one", "allowed": false },
+    { "id": "private-reader-denied", "manifest": { "schemaVersion": 1, "mode": "owner_private", "rules": [] }, "role": "reader", "action": "sync", "key": "private/00000000-0000-0000-0000-000000000001/one", "allowed": false },
+    { "id": "governed-writer-denied", "manifest": { "schemaVersion": 1, "mode": "governed", "rules": [] }, "role": "writer", "action": "update", "key": "records/one", "allowed": false },
+    { "id": "governed-editor-allowed", "manifest": { "schemaVersion": 1, "mode": "governed", "rules": [] }, "role": "editor", "action": "update", "key": "records/one", "allowed": true },
+    { "id": "owner-reassignment-denied", "manifest": { "schemaVersion": 1, "rules": [{ "actions": ["update"], "roles": ["user"], "key": "records/**", "owner": { "source": "jsonPointer", "pointer": "/ownerId" } }] }, "role": "writer", "action": "update", "key": "records/one", "current": { "ownerId": "00000000-0000-0000-0000-000000000001" }, "proposed": { "ownerId": "00000000-0000-0000-0000-000000000003" }, "allowed": false },
+    { "id": "owner-update-allowed", "manifest": { "schemaVersion": 1, "rules": [{ "actions": ["update"], "roles": ["user"], "key": "records/**", "owner": { "source": "jsonPointer", "pointer": "/ownerId" } }] }, "role": "writer", "action": "update", "key": "records/one", "current": { "ownerId": "00000000-0000-0000-0000-000000000001" }, "proposed": { "ownerId": "00000000-0000-0000-0000-000000000001" }, "allowed": true }
+  ]
+}

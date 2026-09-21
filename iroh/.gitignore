@@ -1,0 +1,5 @@
+/target
+# Unlike the esbuild chunks (sdk/.gitignore ignores prebuilt/), these
+# artifacts ARE committed: building them needs a wasm toolchain that CI and
+# Docker builders do not have. Rebuild with `just backend build-iroh-sdk`.
+!/prebuilt/

@@ -1,0 +1,6 @@
+allowBuilds:
+  esbuild: true
+  "@google/genai": true
+  protobufjs: true
+minimumReleaseAgeExclude:
+  - "@rsbuild/core@2.2.8"

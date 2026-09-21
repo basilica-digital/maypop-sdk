@@ -1,0 +1,44 @@
+[package]
+name = "maypop-iroh"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone workspace: this crate builds for wasm32-unknown-unknown only and
+# must not join the backend workspace (whose deps/features target native).
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = "1"
+async-channel = "2"
+console_error_panic_hook = "0.1.7"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+iroh = { version = "1", default-features = false, features = ["tls-ring"] }
+iroh-blobs = { version = "0.103", default-features = false }
+iroh-docs = { version = "0.101", default-features = false }
+iroh-gossip = { version = "0.101", default-features = false, features = ["net"] }
+n0-future = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde-wasm-bindgen = "0.6"
+tokio = { version = "1", default-features = false, features = ["sync"] }
+tokio-stream = { version = "0.1", default-features = false, features = ["sync"] }
+tracing = "0.1"
+# Must match the wasm-bindgen-cli version used in build tooling.
+wasm-bindgen = "=0.2.116"
+wasm-bindgen-futures = "0.4"
+wasm-streams = "0.5"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter"] }
+tracing-subscriber-wasm = "0.1"
+bytes = "1"
+
+[profile.release]
+codegen-units = 1
+strip = "symbols"
+debug = false
+lto = true
+opt-level = "z"
+panic = "abort"

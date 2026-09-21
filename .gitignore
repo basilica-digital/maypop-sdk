@@ -1,0 +1,5 @@
+node_modules
+.dts-tmp/
+/prebuilt/
+dist/
+*.tgz
