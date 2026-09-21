@@ -79,7 +79,7 @@ import { MaypopProvider } from "@basilica-digital/maypop-sdk/react";
 </MaypopProvider>
 ```
 
-## Local sandbox hosts
+## Local development hosts
 
 ### Vite
 
@@ -124,19 +124,79 @@ The framework's normal development command then serves its URL as a Maypop host
 with the application inside it, including when a routed application opens or
 refreshes a deep URL. The app uses the production SDK handshake, iframe
 permissions, and API shapes. Shared KV state persists to `.maypop/kv.json`,
-while Drive metadata and bytes persist under `.maypop/drive/`. Add `.maypop/`
-to the app's `.gitignore`.
+while Drive metadata and bytes persist under `.maypop/drive/`.
 
 The Next.js binding also adds the machine's active network addresses to
 `allowedDevOrigins`, so opening the development server from another device on
 the LAN loads and hydrates its client scripts. Any configured entries are
 preserved.
 
-Identity, KV, and Drive are available locally. Their capability scopes are
-reported through `maypop.user.scopes`; APIs that need another capability fail
-with `maypop/unsupported` when they reach the local host. Host actions such as
-sharing or opening another app fail immediately with the same code instead of
-waiting for a timeout.
+Identity, members, KV, Drive, and a notification outbox are available locally.
+Their capability scopes are reported through `maypop.user.scopes`; APIs that
+need another capability fail with `maypop/unsupported` when they reach the
+local host. Host actions such as sharing or opening another app fail
+immediately with the same code instead of waiting for a timeout.
+
+`maypop.notify()` is captured by default rather than delivered. Open the
+Maypop badge in the development host, or visit `/_maypop/notifications`, to
+inspect the requested and resolved recipients, title, body, and deep link.
+Captured calls persist in `.maypop/notifications.json`.
+
+### Authenticated development
+
+Create `.maypop/dev.json` to opt this machine into authenticated capabilities.
+Do not commit the file: it selects a developer account and can enable access to
+real app data or billable AI calls.
+
+Hybrid mode keeps KV and Drive local while forwarding an explicit set of
+read-only or non-data capabilities through the account authenticated by
+`maypop auth`:
+
+```json
+{
+  "mode": "hybrid",
+  "profile": "dev",
+  "remoteCapabilities": ["ai", "members", "link"],
+  "notifications": "inspect"
+}
+```
+
+`ai` includes chat completions, streaming, images, video, audio, and
+transcription. These calls use the selected account's real allowance and can
+consume credits. `members` reads the real app roster, while `link` enables
+server-side URL unfurling. KV and Drive remain local, and notifications remain
+in the inspector.
+
+Connected mode skips local KV/Drive initialization and sends the entire app API
+surface to the real app:
+
+```json
+{
+  "mode": "connected",
+  "profile": "dev",
+  "notifications": "inspect"
+}
+```
+
+The project must already be connected by `maypop init`, and the selected CLI
+profile must be authenticated and have access to that app. Omit `profile` to
+use the normal CLI selection rules, including `MAYPOP_PROFILE` and the profile
+whose API URL matches the repository. The development host asks the CLI for a
+short-lived app-scoped session; the saved CLI credential and refresh token are
+never exposed to application code.
+
+Real notification delivery requires connected mode and a second explicit
+opt-in:
+
+```json
+{
+  "mode": "connected",
+  "notifications": "live"
+}
+```
+
+Use `"notifications": "disabled"` to remove notification permission entirely.
+The default is `"inspect"` in every development mode.
 
 The local bearer token is random for every server run, and a lock prevents two
 development servers from writing the same data directory. To use a different
@@ -152,6 +212,17 @@ maypop({
 The local host is development tooling, not a security boundary. Keep the
 development server bound to a trusted interface unless the project itself is
 safe to expose.
+
+Ignore generated development state without hiding a committed KV policy:
+
+```gitignore
+.maypop/.lock
+.maypop/config.json
+.maypop/dev.json
+.maypop/drive/
+.maypop/kv.json
+.maypop/notifications.json
+```
 
 The bindings only affect framework development servers. Production builds
 remain ordinary app bundles. `maypop init` records the matching build adapter
@@ -171,9 +242,9 @@ forms use the same host handshake and backend API, and both expose
 but one is enough.
 
 This package is the guest side of the Maypop protocol. Outside Maypop,
-`maypop.ready()` waits for a compatible host. A future local sandbox command
-can provide that host protocol and local capability services without requiring
-applications to change their SDK imports.
+`maypop.ready()` waits for a compatible host. The framework integrations above
+provide that host protocol without requiring applications to change their SDK
+imports.
 
 ## Backend artifacts
 

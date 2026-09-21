@@ -7,7 +7,7 @@ import {
   type MaypopSandboxServer,
 } from "./sandbox/runtime.js";
 
-/** Options for the local Maypop Next.js host. */
+/** Options for the local Maypop Next.js development host. */
 export interface MaypopNextOptions {
   /** Storage directory, relative to the Next.js project root. Defaults to `.maypop`. */
   dataDirectory?: string;
@@ -84,6 +84,7 @@ function sandboxRewrites(origin: string): Rewrite[] {
 
   return [
     proxy("/app-api/:path*"),
+    proxy("/_maypop/:path*"),
     proxy("/sdk/kv-v1.js"),
     proxy("/_maypop-sw.js"),
     proxy("/_maypop/upload/:path*"),
@@ -136,7 +137,7 @@ function allowedDevOrigins(configured: string[] | undefined): string[] {
   return [...origins].filter(Boolean);
 }
 
-/** Add a development-only Maypop sandbox host to a Next.js configuration. */
+/** Add a Maypop development host configured by `.maypop/dev.json`. */
 export function withMaypop(
   config: NextConfig = {},
   options: MaypopNextOptions = {},

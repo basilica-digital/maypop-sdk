@@ -7,7 +7,7 @@ import {
   type MaypopSandboxRuntime,
 } from "./sandbox/runtime.js";
 
-/** Options for the local Maypop Rsbuild host. */
+/** Options for the local Maypop Rsbuild development host. */
 export interface MaypopRsbuildPluginOptions {
   /** Storage directory, relative to Rsbuild's project root. Defaults to `.maypop`. */
   dataDirectory?: string;
@@ -23,7 +23,7 @@ function injectMarkerCleanup(html: string): string {
   return `${html.slice(0, offset)}${script}${html.slice(offset)}`;
 }
 
-/** Wrap Rsbuild's dev server in a local Maypop host with persistent KV and Drive. */
+/** Wrap Rsbuild's dev server in a Maypop host configured by `.maypop/dev.json`. */
 export function maypop(
   options: MaypopRsbuildPluginOptions = {},
 ): RsbuildPlugin {

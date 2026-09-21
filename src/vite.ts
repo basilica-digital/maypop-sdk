@@ -6,7 +6,7 @@ import {
   sendMaypopSandboxError,
 } from "./sandbox/runtime.js";
 
-/** Options for the local Maypop Vite host. */
+/** Options for the local Maypop Vite development host. */
 export interface MaypopVitePluginOptions {
   /** Storage directory, relative to Vite's project root. Defaults to `.maypop`. */
   dataDirectory?: string;
@@ -14,7 +14,7 @@ export interface MaypopVitePluginOptions {
   username?: string;
 }
 
-/** Wrap Vite's dev server in a local Maypop host with persistent KV and Drive. */
+/** Wrap Vite's dev server in a Maypop host configured by `.maypop/dev.json`. */
 export function maypop(options: MaypopVitePluginOptions = {}): Plugin {
   return {
     name: "maypop-sandbox",
