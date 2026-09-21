@@ -296,17 +296,24 @@ function runGit(root: string, args: string[]): Promise<string> {
 async function repositoryConnection(
   root: string,
 ): Promise<{ appId: string; apiUrl: string }> {
-  const repository = await runGit(root, ["rev-parse", "--show-toplevel"]);
-  const [appId, configuredApiUrl] = await Promise.all([
-    runGit(repository, ["config", "--local", "--get", "maypop.app-id"]),
-    runGit(repository, ["config", "--local", "--get", "maypop.api-url"]),
-  ]);
-  if (!appId || !configuredApiUrl) {
+  try {
+    const repository = await runGit(root, ["rev-parse", "--show-toplevel"]);
+    const [appId, configuredApiUrl] = await Promise.all([
+      runGit(repository, ["config", "--local", "--get", "maypop.app-id"]),
+      runGit(repository, ["config", "--local", "--get", "maypop.api-url"]),
+    ]);
+    if (appId && configuredApiUrl) {
+      return { appId, apiUrl: normalizeUrl(configuredApiUrl) };
+    }
+  } catch (error) {
     throw new Error(
       "This repository is not connected to Maypop. Run `maypop init` first.",
+      { cause: error },
     );
   }
-  return { appId, apiUrl: normalizeUrl(configuredApiUrl) };
+  throw new Error(
+    "This repository is not connected to Maypop. Run `maypop init` first.",
+  );
 }
 
 /** Mint an app-scoped session from the authenticated local profile store. */
