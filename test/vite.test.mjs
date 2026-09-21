@@ -16,6 +16,13 @@ import { createServer as createViteServer } from "vite";
 
 import { maypop } from "@basilica-digital/maypop-sdk/vite";
 
+test("the public plugin type is independent of the SDK's Vite version", async () => {
+  const declaration = await readFile(join(process.cwd(), "dist/vite.d.ts"), "utf8");
+
+  assert.doesNotMatch(declaration, /from ["']vite["']/);
+  assert.match(declaration, /interface MaypopVitePlugin/);
+});
+
 function readSandboxConfigValue(html, name) {
   const match = html.match(new RegExp(`"${name}":"([^"]+)"`));
   assert.ok(match, `sandbox HTML exposes ${name}`);

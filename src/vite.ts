@@ -1,3 +1,4 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 
 import {
@@ -14,10 +15,48 @@ export interface MaypopVitePluginOptions {
   username?: string;
 }
 
+interface MaypopViteDevServer {
+  config: {
+    root: string;
+    logger: { info(message: string): void };
+  };
+  middlewares: {
+    use(
+      handler: (
+        request: IncomingMessage,
+        response: ServerResponse,
+        next: () => void,
+      ) => void,
+    ): void;
+  };
+  httpServer?: {
+    once(event: "close", listener: () => void): unknown;
+  } | null;
+}
+
+/**
+ * Vite-compatible plugin shape that does not expose the SDK's installed Vite
+ * version in consumer type checking.
+ */
+export interface MaypopVitePlugin {
+  readonly name: "maypop-sandbox";
+  readonly apply: "serve";
+  readonly enforce: "pre";
+  readonly transformIndexHtml: {
+    readonly order: "pre";
+    handler(): Array<{
+      tag: "script";
+      injectTo: "head-prepend";
+      children: string;
+    }>;
+  };
+  configureServer(server: MaypopViteDevServer): Promise<() => void>;
+}
+
 /** Wrap Vite's dev server in a Maypop host configured by `.maypop/dev.json`. */
-export function maypop(options: MaypopVitePluginOptions = {}): Plugin {
-  return {
-    name: "maypop-sandbox",
+export function maypop(options: MaypopVitePluginOptions = {}): MaypopVitePlugin {
+  const plugin = {
+    name: "maypop-sandbox" as const,
     apply: "serve",
     enforce: "pre",
     // The host and app share a URL. The marker bypasses the host for the
@@ -27,14 +66,14 @@ export function maypop(options: MaypopVitePluginOptions = {}): Plugin {
       handler() {
         return [
           {
-            tag: "script",
+            tag: "script" as const,
             injectTo: "head-prepend",
             children: sandboxMarkerCleanupScript(),
           },
         ];
       },
     },
-    async configureServer(server) {
+    async configureServer(server: MaypopViteDevServer) {
       const runtime = await createMaypopSandboxRuntime(
         server.config.root,
         options,
@@ -52,7 +91,9 @@ export function maypop(options: MaypopVitePluginOptions = {}): Plugin {
         );
       };
     },
-  };
+  } satisfies Plugin;
+
+  return plugin;
 }
 
 export default maypop;
