@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: npm install --global npm@latest
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - name: Verify tag matches package version
+        run: |
+          node --input-type=module -e '
+            import pkg from "./package.json" with { type: "json" };
+            const expected = `v${pkg.version}`;
+            if (process.env.GITHUB_REF_NAME !== expected) {
+              throw new Error(`tag ${process.env.GITHUB_REF_NAME} does not match ${expected}`);
+            }
+          '
+      - run: npm publish --access public --provenance
