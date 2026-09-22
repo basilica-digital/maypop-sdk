@@ -31,7 +31,8 @@ export function notificationInspectorHtml(mode: DevelopmentMode): string {
       header { display: flex; align-items: start; justify-content: space-between; gap: 24px; }
       h1 { margin: 0 0 6px; font-size: 24px; }
       p { color: color-mix(in srgb, currentColor 68%, transparent); }
-      button { min-height: 36px; padding: 0 12px; border: 1px solid color-mix(in srgb, currentColor 22%, transparent); border-radius: 8px; background: transparent; color: inherit; cursor: pointer; }
+      button, .open { min-height: 36px; padding: 0 12px; border: 1px solid color-mix(in srgb, currentColor 22%, transparent); border-radius: 8px; background: transparent; color: inherit; cursor: pointer; }
+      .open { display: inline-flex; align-items: center; margin-top: 14px; text-decoration: none; }
       ol { list-style: none; padding: 0; display: grid; gap: 12px; }
       article { border: 1px solid color-mix(in srgb, currentColor 16%, transparent); border-radius: 12px; padding: 16px; }
       article header { align-items: center; }
@@ -62,7 +63,17 @@ export function notificationInspectorHtml(mode: DevelopmentMode): string {
           const requested = note.requestedTo === "all" ? "All app members" : note.requestedTo.join(", ");
           const recipients = note.recipients.map((recipient) => "@" + recipient.username).join(", ") || "No recipients";
           for (const [label, value] of [["From", "@" + note.sender.username], ["Requested", requested], ["Resolved", recipients], ["Body", note.body || "—"], ["Path", note.path || "—"]]) details.append(...row(label, value));
-          article.append(details); li.append(article); items.append(li);
+          article.append(details);
+          if (note.path) {
+            const open = document.createElement("a");
+            open.className = "open";
+            open.href = note.path;
+            open.target = "_blank";
+            open.rel = "noreferrer";
+            open.textContent = "Open in local app";
+            article.append(open);
+          }
+          li.append(article); items.append(li);
         }
       }
       document.getElementById("clear").addEventListener("click", async () => { await fetch("/_maypop/notifications", { method: "DELETE" }); await load(); });

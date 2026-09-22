@@ -68,6 +68,18 @@ test("the Next.js binding composes rewrites around a private sandbox server", as
     });
     assert.equal(identity.status, 200);
     assert.equal((await identity.json()).username, "Developer");
+
+    const agentRuntime = await fetch(new URL("/sdk/agent-v1.js", sandboxUrl));
+    assert.equal(agentRuntime.status, 200);
+    assert.match(agentRuntime.headers.get("content-type"), /javascript/);
+    await agentRuntime.arrayBuffer();
+
+    const multiplayerWasm = await fetch(
+      new URL("/sdk/iroh-v1_bg.wasm", sandboxUrl),
+    );
+    assert.equal(multiplayerWasm.status, 200);
+    assert.equal(multiplayerWasm.headers.get("content-type"), "application/wasm");
+    await multiplayerWasm.arrayBuffer();
   } finally {
     if (previousNodeEnvironment === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previousNodeEnvironment;

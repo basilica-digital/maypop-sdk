@@ -9,13 +9,41 @@ const DEV_CONFIG_NAME = "dev.json";
 
 export type DevelopmentMode = "sandbox" | "hybrid" | "connected";
 export type NotificationMode = "inspect" | "live" | "disabled";
-export type RemoteCapability = "ai" | "members" | "link";
+export type RemoteCapability =
+  | "ai"
+  | "members"
+  | "link"
+  | "mcp"
+  | "multiplayer";
+export type SandboxRole = "reader" | "writer" | "editor" | "admin";
+
+export type SandboxViewer = {
+  username: string;
+  role: SandboxRole;
+  avatarUrl: string | null;
+  anonymous: boolean;
+  signInGrantsWrite: boolean;
+  signedInUsername: string;
+  signedInRole: Exclude<SandboxRole, "reader">;
+};
+
+export type SandboxMember = {
+  id?: string;
+  username: string;
+  role: SandboxRole;
+  avatarUrl: string | null;
+  connected: boolean;
+};
 
 export type DevelopmentConfig = {
   mode: DevelopmentMode;
   profile?: string;
   remoteCapabilities: RemoteCapability[];
   notifications: NotificationMode;
+  viewer?: SandboxViewer;
+  members: SandboxMember[];
+  guestCount: number;
+  strictStorage: boolean;
 };
 
 type AppSession = {
@@ -54,6 +82,144 @@ function configError(path: string, message: string): Error {
   return new Error(`Invalid Maypop development config at ${path}: ${message}`);
 }
 
+const ROLES = ["reader", "writer", "editor", "admin"] as const;
+const REMOTE_CAPABILITIES = [
+  "ai",
+  "members",
+  "link",
+  "mcp",
+  "multiplayer",
+] as const;
+
+function optionalString(
+  path: string,
+  field: string,
+  value: unknown,
+): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "string" || !value.trim()) {
+    throw configError(path, `\`${field}\` must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function optionalBoolean(
+  path: string,
+  field: string,
+  value: unknown,
+): boolean | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "boolean") {
+    throw configError(path, `\`${field}\` must be a boolean`);
+  }
+  return value;
+}
+
+function role(
+  path: string,
+  field: string,
+  value: unknown,
+  fallback: SandboxRole,
+): SandboxRole {
+  if (value == null) return fallback;
+  if (!(ROLES as readonly unknown[]).includes(value)) {
+    throw configError(
+      path,
+      `\`${field}\` must be "reader", "writer", "editor", or "admin"`,
+    );
+  }
+  return value as SandboxRole;
+}
+
+function parseViewer(path: string, value: unknown): SandboxViewer | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw configError(path, "`viewer` must be an object");
+  }
+  const raw = value as Record<string, unknown>;
+  const anonymous =
+    optionalBoolean(path, "viewer.anonymous", raw.anonymous) ?? false;
+  const viewerRole = role(
+    path,
+    "viewer.role",
+    raw.role,
+    anonymous ? "reader" : "admin",
+  );
+  if (anonymous && viewerRole !== "reader") {
+    throw configError(path, "an anonymous `viewer` must have role \"reader\"");
+  }
+  const signInGrantsWrite =
+    optionalBoolean(path, "viewer.signInGrantsWrite", raw.signInGrantsWrite) ??
+    false;
+  if (signInGrantsWrite && !anonymous) {
+    throw configError(
+      path,
+      "`viewer.signInGrantsWrite` is only valid for an anonymous viewer",
+    );
+  }
+  const signedInRole = role(
+    path,
+    "viewer.signedInRole",
+    raw.signedInRole,
+    "writer",
+  );
+  if (signedInRole === "reader") {
+    throw configError(path, "`viewer.signedInRole` must grant write access");
+  }
+  const avatarUrl = raw.avatarUrl;
+  if (avatarUrl != null && typeof avatarUrl !== "string") {
+    throw configError(path, "`viewer.avatarUrl` must be a string or null");
+  }
+  return {
+    username:
+      optionalString(path, "viewer.username", raw.username) ??
+      (anonymous ? "Guest" : "Developer"),
+    role: viewerRole,
+    avatarUrl: typeof avatarUrl === "string" ? avatarUrl : null,
+    anonymous,
+    signInGrantsWrite,
+    signedInUsername:
+      optionalString(path, "viewer.signedInUsername", raw.signedInUsername) ??
+      "Developer",
+    signedInRole: signedInRole as Exclude<SandboxRole, "reader">,
+  };
+}
+
+function parseMembers(path: string, value: unknown): SandboxMember[] {
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    throw configError(path, "`members` must be an array");
+  }
+  return value.map((member, index) => {
+    if (typeof member !== "object" || member === null || Array.isArray(member)) {
+      throw configError(path, `\`members[${index}]\` must be an object`);
+    }
+    const raw = member as Record<string, unknown>;
+    const id = optionalString(path, `members[${index}].id`, raw.id);
+    const avatarUrl = raw.avatarUrl;
+    if (avatarUrl != null && typeof avatarUrl !== "string") {
+      throw configError(
+        path,
+        `\`members[${index}].avatarUrl\` must be a string or null`,
+      );
+    }
+    return {
+      ...(id ? { id } : {}),
+      username:
+        optionalString(path, `members[${index}].username`, raw.username) ??
+        `Member ${index + 1}`,
+      role: role(path, `members[${index}].role`, raw.role, "writer"),
+      avatarUrl: typeof avatarUrl === "string" ? avatarUrl : null,
+      connected:
+        optionalBoolean(
+          path,
+          `members[${index}].connected`,
+          raw.connected,
+        ) ?? false,
+    };
+  });
+}
+
 /** Read and validate the developer-local `.maypop/dev.json`. */
 export async function loadDevelopmentConfig(
   dataDirectory: string,
@@ -68,6 +234,9 @@ export async function loadDevelopmentConfig(
         mode: "sandbox",
         remoteCapabilities: [],
         notifications: "inspect",
+        members: [],
+        guestCount: 0,
+        strictStorage: false,
       };
     }
     throw new Error(`Could not read Maypop development config at ${path}`, {
@@ -121,18 +290,40 @@ export async function loadDevelopmentConfig(
     configuredCapabilities != null &&
     (!Array.isArray(configuredCapabilities) ||
       configuredCapabilities.some(
-        (value) => !["ai", "members", "link"].includes(String(value)),
+        (value) =>
+          !(REMOTE_CAPABILITIES as readonly unknown[]).includes(value),
       ))
   ) {
     throw configError(
       path,
-      '`remoteCapabilities` may contain only "ai", "members", and "link"',
+      '`remoteCapabilities` may contain only "ai", "members", "link", "mcp", and "multiplayer"',
     );
   }
   if (configuredCapabilities != null && mode !== "hybrid") {
     throw configError(
       path,
       "`remoteCapabilities` is only valid in hybrid mode",
+    );
+  }
+  if (
+    (raw.viewer != null || raw.members != null || raw.guestCount != null) &&
+    mode !== "sandbox"
+  ) {
+    throw configError(
+      path,
+      "`viewer`, `members`, and `guestCount` are only valid in sandbox mode",
+    );
+  }
+  const guestCount = raw.guestCount ?? 0;
+  if (!Number.isSafeInteger(guestCount) || Number(guestCount) < 0) {
+    throw configError(path, "`guestCount` must be a non-negative integer");
+  }
+  const strictStorage =
+    optionalBoolean(path, "strictStorage", raw.strictStorage) ?? false;
+  if (strictStorage && mode === "connected") {
+    throw configError(
+      path,
+      "`strictStorage` is only valid when KV and Drive are local",
     );
   }
 
@@ -146,6 +337,10 @@ export async function loadDevelopmentConfig(
         ? ((configuredCapabilities ?? ["ai", "members", "link"]) as RemoteCapability[])
         : [],
     notifications: notifications as NotificationMode,
+    ...(mode === "sandbox" ? { viewer: parseViewer(path, raw.viewer) } : {}),
+    members: mode === "sandbox" ? parseMembers(path, raw.members) : [],
+    guestCount: mode === "sandbox" ? Number(guestCount) : 0,
+    strictStorage,
   };
 }
 

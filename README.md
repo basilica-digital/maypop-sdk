@@ -131,11 +131,12 @@ The Next.js binding also adds the machine's active network addresses to
 the LAN loads and hydrates its client scripts. Any configured entries are
 preserved.
 
-Identity, members, KV, Drive, and a notification outbox are available locally.
-Their capability scopes are reported through `maypop.user.scopes`; APIs that
-need another capability fail with `maypop/unsupported` when they reach the
-local host. Host actions such as sharing or opening another app fail
-immediately with the same code instead of waiting for a timeout.
+Identity, members, KV, Drive, mock MCP integrations, share-card previews, and a
+notification outbox are available locally. Their capability scopes are
+reported through `maypop.user.scopes`; APIs that need another capability fail
+with `maypop/unsupported` when they reach the local host. `maypop.apps.open()`
+and group-settings navigation remain unavailable because they require the
+Maypop product shell rather than an app API.
 
 `maypop.notify()` is captured by default rather than delivered. Open the
 Maypop badge in the development host, or visit `/_maypop/notifications`, to
@@ -156,16 +157,22 @@ read-only or non-data capabilities through the account authenticated by
 {
   "mode": "hybrid",
   "profile": "dev",
-  "remoteCapabilities": ["ai", "members", "link"],
+  "remoteCapabilities": ["ai", "members", "link", "mcp", "multiplayer"],
   "notifications": "inspect"
 }
 ```
 
-`ai` includes chat completions, streaming, images, video, audio, and
-transcription. These calls use the selected account's real allowance and can
-consume credits. `members` reads the real app roster, while `link` enables
-server-side URL unfurling. KV and Drive remain local, and notifications remain
-in the inspector.
+`ai` includes chat completions, streaming, images, video, audio,
+transcription, and `maypop.agent` (the development host serves its lazy browser
+chunk). These calls use the selected account's real allowance and can consume
+credits. `members` reads the real app roster, `link` enables server-side URL
+unfurling, `mcp` exposes the app's real linked MCP servers and tools, and
+`multiplayer` uses the real rendezvous API while loading the Iroh JS/Wasm
+runtime locally. KV and Drive remain local, and notifications remain in the
+inspector. Connect a server with `maypop mcp connect`, then run `maypop mcp
+link` in the app repository before starting the development server. A hybrid
+configuration cannot combine the real `mcp` capability with
+`.maypop/mcp.json` fixtures.
 
 Connected mode skips local KV/Drive initialization and sends the entire app API
 surface to the real app:
@@ -198,6 +205,79 @@ opt-in:
 
 Use `"notifications": "disabled"` to remove notification permission entirely.
 The default is `"inspect"` in every development mode.
+
+### Local identities and audiences
+
+Sandbox mode can start as an anonymous, reader, writer, editor, or admin
+viewer and expose a configurable audience. This exercises the same public
+identity, mode, scope, members, and sign-in behavior as the hosted SDK:
+
+```json
+{
+  "mode": "sandbox",
+  "viewer": {
+    "username": "Visitor",
+    "role": "reader",
+    "anonymous": true,
+    "signInGrantsWrite": true,
+    "signedInUsername": "Alice",
+    "signedInRole": "writer"
+  },
+  "members": [
+    { "username": "Bob", "role": "editor", "connected": false }
+  ],
+  "guestCount": 2
+}
+```
+
+Calling `maypop.signIn()` in this fixture upgrades the local session and
+reloads the app as the configured signed-in viewer. The local API enforces
+read-only KV, Drive, and notification scopes, so direct requests cannot bypass
+the browser SDK's permission checks.
+
+Local KV writes validate the production key and value limits. Set
+`"strictStorage": true` to additionally enforce a committed
+`.maypop/kv-policy.json` during local pulls and pushes. Preset and advanced
+policies use the same roles, key patterns, and ownership predicates as the
+platform.
+
+### Mock integrations and host actions
+
+Add `.maypop/mcp.json` to exercise MCP discovery, tool wrapping, calls, and
+agent tools without invoking a real external integration:
+
+```json
+{
+  "schemaVersion": 1,
+  "servers": [
+    {
+      "id": "search",
+      "name": "Fixture search",
+      "url": "mock://search",
+      "account": "developer@example.com",
+      "tools": [
+        {
+          "name": "lookup",
+          "description": "Return a fixed search fixture.",
+          "inputSchema": {
+            "type": "object",
+            "properties": { "query": { "type": "string" } }
+          },
+          "result": {
+            "content": [{ "type": "text", "text": "Fixture result" }],
+            "structuredContent": { "items": [] }
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+`maypop.share()` opens a host-owned card containing a local deep link. Captured
+notifications with a `path` expose an **Open in local app** action in the
+outbox. These simulate the app-visible contract without claiming that a local
+link was published or that a captured notification was delivered.
 
 The local bearer token is random for every server run, and a lock prevents two
 development servers from writing the same data directory. To use a different

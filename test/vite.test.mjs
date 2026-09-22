@@ -238,11 +238,13 @@ test("the Vite plugin hosts and persists sandbox KV and Drive", async () => {
       headers: authorization,
     }).then((response) => response.json());
     assert.match(me.scopes, /notify:send/);
+    assert.doesNotMatch(me.scopes, /mp:/);
     const members = await fetch(`${sandbox.url}/app-api/members`, {
       headers: authorization,
     }).then((response) => response.json());
     assert.equal(members.members[0].id, me.id);
     assert.equal(members.members[0].username, "Developer");
+    assert.equal("scopes" in members.members[0], false);
 
     const notified = await fetch(`${sandbox.url}/app-api/notify`, {
       method: "POST",
@@ -270,6 +272,17 @@ test("the Vite plugin hosts and persists sandbox KV and Drive", async () => {
       (response) => response.text(),
     );
     assert.match(worker, /_upload/);
+    const agentChunk = await fetch(`${sandbox.url}/sdk/agent-v1.js`);
+    assert.equal(agentChunk.status, 200);
+    assert.match(agentChunk.headers.get("content-type"), /javascript/);
+    assert.ok((await agentChunk.arrayBuffer()).byteLength > 1_000);
+    const irohChunk = await fetch(`${sandbox.url}/sdk/iroh-v1.js`);
+    assert.equal(irohChunk.status, 200);
+    assert.match(irohChunk.headers.get("content-type"), /javascript/);
+    const irohWasm = await fetch(`${sandbox.url}/sdk/iroh-v1_bg.wasm`);
+    assert.equal(irohWasm.status, 200);
+    assert.equal(irohWasm.headers.get("content-type"), "application/wasm");
+    assert.ok((await irohWasm.arrayBuffer()).byteLength > 1_000);
 
     await sandbox.close();
     sandbox = await startMiddlewareSandbox(root);
@@ -417,6 +430,226 @@ test("development config requires a JSON object", async () => {
   }
 });
 
+test("sandbox viewer fixtures exercise read-only, audience, and sign-in transitions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "maypop-viewer-fixture-test-"));
+  const dataDirectory = join(root, ".maypop");
+  await mkdir(dataDirectory, { recursive: true });
+  await writeFile(
+    join(dataDirectory, "dev.json"),
+    JSON.stringify({
+      mode: "sandbox",
+      viewer: {
+        username: "Visitor",
+        role: "reader",
+        anonymous: true,
+        signInGrantsWrite: true,
+        signedInUsername: "Alice",
+        signedInRole: "writer",
+      },
+      members: [{ username: "Bob", role: "editor", connected: false }],
+      guestCount: 2,
+    }),
+  );
+
+  let sandbox;
+  try {
+    sandbox = await startMiddlewareSandbox(root);
+    const hostHtml = await fetch(sandbox.url, {
+      headers: { Accept: "text/html" },
+    }).then((response) => response.text());
+    const token = readSandboxConfigValue(hostHtml, "token");
+    const authorization = { Authorization: `Bearer ${token}` };
+    const visitor = await fetch(`${sandbox.url}/app-api/me`, {
+      headers: authorization,
+    }).then((response) => response.json());
+    assert.equal(visitor.username, "Visitor");
+    assert.equal(visitor.role, "reader");
+    assert.equal(visitor.isAnonymous, true);
+    assert.doesNotMatch(visitor.scopes, /kv:write/);
+
+    const refusedWrite = await fetch(`${sandbox.url}/app-api/kv/push`, {
+      method: "POST",
+      headers: { ...authorization, "Content-Type": "application/json" },
+      body: JSON.stringify({ mutations: [] }),
+    });
+    assert.equal(refusedWrite.status, 403);
+
+    const audience = await fetch(`${sandbox.url}/app-api/members`, {
+      headers: authorization,
+    }).then((response) => response.json());
+    assert.equal(audience.guestCount, 2);
+    assert.deepEqual(
+      audience.members.map((member) => member.username),
+      ["Bob", "Visitor"],
+    );
+
+    const signedIn = await fetch(`${sandbox.url}/_maypop/sign-in`, {
+      method: "POST",
+    });
+    assert.equal(signedIn.status, 200);
+    const alice = await fetch(`${sandbox.url}/app-api/me`, {
+      headers: authorization,
+    }).then((response) => response.json());
+    assert.equal(alice.username, "Alice");
+    assert.equal(alice.role, "writer");
+    assert.equal(alice.isAnonymous, false);
+    assert.match(alice.scopes, /kv:write/);
+  } finally {
+    await sandbox?.close().catch(() => {});
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("sandbox MCP fixtures support discovery and deterministic tool calls", async () => {
+  const root = await mkdtemp(join(tmpdir(), "maypop-mcp-fixture-test-"));
+  const dataDirectory = join(root, ".maypop");
+  await mkdir(dataDirectory, { recursive: true });
+  await writeFile(
+    join(dataDirectory, "mcp.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      servers: [
+        {
+          id: "search",
+          name: "Fixture search",
+          url: "mock://search",
+          account: "developer@example.com",
+          tools: [
+            {
+              name: "lookup",
+              description: "Return a fixed fixture result.",
+              inputSchema: {
+                type: "object",
+                properties: { query: { type: "string" } },
+              },
+              result: {
+                content: [{ type: "text", text: "Fixture result" }],
+                structuredContent: { items: ["one"] },
+              },
+            },
+          ],
+        },
+      ],
+    }),
+  );
+
+  let sandbox;
+  try {
+    sandbox = await startMiddlewareSandbox(root);
+    const hostHtml = await fetch(sandbox.url, {
+      headers: { Accept: "text/html" },
+    }).then((response) => response.text());
+    const token = readSandboxConfigValue(hostHtml, "token");
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    };
+    const me = await fetch(`${sandbox.url}/app-api/me`, {
+      headers,
+    }).then((response) => response.json());
+    assert.match(me.scopes, /mcp:use/);
+    const servers = await fetch(`${sandbox.url}/app-api/mcp/servers`, {
+      headers,
+    }).then((response) => response.json());
+    assert.equal(servers.servers[0].name, "Fixture search");
+    const tools = await fetch(`${sandbox.url}/app-api/mcp/tools/list`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ serverId: "search" }),
+    }).then((response) => response.json());
+    assert.equal(tools.tools[0].name, "lookup");
+    const result = await fetch(`${sandbox.url}/app-api/mcp/tools/call`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        serverId: "search",
+        name: "lookup",
+        arguments: { query: "hello" },
+      }),
+    }).then((response) => response.json());
+    assert.deepEqual(result.structuredContent, { items: ["one"] });
+  } finally {
+    await sandbox?.close().catch(() => {});
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("strict sandbox storage enforces the committed KV policy", async () => {
+  const root = await mkdtemp(join(tmpdir(), "maypop-kv-policy-test-"));
+  const dataDirectory = join(root, ".maypop");
+  await mkdir(dataDirectory, { recursive: true });
+  await writeFile(
+    join(dataDirectory, "dev.json"),
+    JSON.stringify({
+      mode: "sandbox",
+      strictStorage: true,
+      viewer: { username: "Writer", role: "writer" },
+    }),
+  );
+  await writeFile(
+    join(dataDirectory, "kv-policy.json"),
+    JSON.stringify({ schemaVersion: 1, mode: "owner_private" }),
+  );
+
+  let sandbox;
+  try {
+    sandbox = await startMiddlewareSandbox(root);
+    const hostHtml = await fetch(sandbox.url, {
+      headers: { Accept: "text/html" },
+    }).then((response) => response.text());
+    const token = readSandboxConfigValue(hostHtml, "token");
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    };
+    const me = await fetch(`${sandbox.url}/app-api/me`, { headers }).then(
+      (response) => response.json(),
+    );
+    const ownWrite = await fetch(`${sandbox.url}/app-api/kv/push`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        mutations: [
+          {
+            id: 1,
+            clientID: "own-client",
+            name: "set",
+            args: { key: `private/${me.id}/note`, value: "mine" },
+          },
+        ],
+      }),
+    });
+    assert.equal(ownWrite.status, 200);
+    const otherWrite = await fetch(`${sandbox.url}/app-api/kv/push`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        mutations: [
+          {
+            id: 1,
+            clientID: "other-client",
+            name: "set",
+            args: { key: "private/someone-else/note", value: "not mine" },
+          },
+        ],
+      }),
+    });
+    assert.equal(otherWrite.status, 403);
+    const pull = await fetch(`${sandbox.url}/app-api/kv/pull`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ cookie: null }),
+    }).then((response) => response.json());
+    assert.deepEqual(
+      pull.patch.filter((operation) => operation.op === "put").map((operation) => operation.key),
+      [`private/${me.id}/note`],
+    );
+  } finally {
+    await sandbox?.close().catch(() => {});
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("hybrid mode reads the selected profile and mints its own app session", async () => {
   const root = await mkdtemp(join(tmpdir(), "maypop-hybrid-test-"));
   const dataDirectory = join(root, ".maypop");
@@ -444,7 +677,7 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
           token: "remote-app-token",
           expiresIn: 1,
           refreshToken: "remote-refresh-token",
-          scopes: "identity:read group:read ai:use notify:send",
+          scopes: "identity:read group:read ai:use mcp:use mp:list mp:create mp:join notify:send",
         }),
       );
       return;
@@ -456,7 +689,7 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
         JSON.stringify({
           token: "remote-app-token-refreshed",
           expiresIn: 300,
-          scopes: "identity:read group:read ai:use notify:send",
+          scopes: "identity:read group:read ai:use mcp:use mp:list mp:create mp:join notify:send",
         }),
       );
       return;
@@ -476,7 +709,7 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
           avatarUrl: null,
           connected: true,
           isAnonymous: false,
-          scopes: "identity:read group:read ai:use notify:send",
+          scopes: "identity:read group:read ai:use mcp:use mp:list mp:create mp:join notify:send",
         }),
       );
       return;
@@ -495,6 +728,28 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
     }
     if (request.url === "/app-api/ai/models") {
       response.end(JSON.stringify({ data: [{ id: "fast", description: "Fast" }] }));
+      return;
+    }
+    if (request.url === "/app-api/multiplayer/room-key?room=board") {
+      response.end(JSON.stringify({ key: "fixture-room-key" }));
+      return;
+    }
+    if (request.url === "/app-api/mcp/servers") {
+      response.end(
+        JSON.stringify({
+          servers: [
+            {
+              id: "00000000-0000-4000-8000-000000000005",
+              name: "Connected search",
+              authKind: "headers",
+              needsReauth: false,
+              toolkitSlug: null,
+              logoUrl: null,
+              account: null,
+            },
+          ],
+        }),
+      );
       return;
     }
     if (request.url === "/app-api/kv/pull") {
@@ -554,7 +809,12 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
   );
   await writeFile(
     join(dataDirectory, "dev.json"),
-    JSON.stringify({ mode: "hybrid", profile: "dev", notifications: "inspect" }),
+    JSON.stringify({
+      mode: "hybrid",
+      profile: "dev",
+      remoteCapabilities: ["ai", "members", "link", "mcp", "multiplayer"],
+      notifications: "inspect",
+    }),
   );
 
   const previousConfigDirectory = process.env.MAYPOP_CONFIG_DIR;
@@ -576,10 +836,20 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
       headers: authorization,
     }).then((response) => response.json());
     assert.equal(me.username, "Authenticated developer");
+    assert.match(me.scopes, /mp:join/);
     const models = await fetch(`${sandbox.url}/app-api/ai/models`, {
       headers: authorization,
     }).then((response) => response.json());
     assert.equal(models.data[0].id, "fast");
+    const room = await fetch(
+      `${sandbox.url}/app-api/multiplayer/room-key?room=board`,
+      { headers: authorization },
+    ).then((response) => response.json());
+    assert.equal(room.key, "fixture-room-key");
+    const mcp = await fetch(`${sandbox.url}/app-api/mcp/servers`, {
+      headers: authorization,
+    }).then((response) => response.json());
+    assert.equal(mcp.servers[0].name, "Connected search");
 
     const localPull = await fetch(`${sandbox.url}/app-api/kv/pull`, {
       method: "POST",
@@ -599,7 +869,7 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
     assert.deepEqual(outbox.notifications[0].recipients, [
       { id: teammateId, username: "Teammate" },
     ]);
-    assert.equal(remoteRequests, 5);
+    assert.equal(remoteRequests, 7);
     assert.equal(refreshRequests, 1);
     assert.equal(mintRequests, 1);
 
@@ -626,7 +896,11 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
     }).then((response) => response.json());
     assert.equal(connectedPull.cookie, 17);
     assert.equal(connectedPull.patch[1].key, "remote");
-    assert.equal(remoteRequests, 2);
+    const connectedMcp = await fetch(`${sandbox.url}/app-api/mcp/servers`, {
+      headers: { Authorization: `Bearer ${connectedToken}` },
+    }).then((response) => response.json());
+    assert.equal(connectedMcp.servers[0].name, "Connected search");
+    assert.equal(remoteRequests, 3);
     assert.equal(refreshRequests, 2);
     assert.equal(mintRequests, 2);
   } finally {
