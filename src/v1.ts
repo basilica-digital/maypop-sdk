@@ -349,9 +349,11 @@ interface MaypopAiMessage {
 type MaypopAiModel =
   /**
    * Small, fast, and inexpensive. Best for simple, high-volume, or
-   * latency-sensitive calls where a smaller model will plainly do: classifying
-   * input, short rewrites, extracting a field, generating a name or title,
-   * quick suggestions. Reach for this first when the task is well-scoped.
+   * latency-sensitive calls where a smaller model will plainly do: short
+   * rewrites, extracting a field, generating a name or title, quick
+   * suggestions. Reach for this first when the task is well-scoped. (For
+   * classifying or routing input, {@link MaypopAi.decide} is cheaper and
+   * needs no parsing.)
    *
    * e.g. an RPG app uses `"fast"` to suggest character names or a quest title.
    */
@@ -565,6 +567,131 @@ interface MaypopAiTranscriptionRequest {
 }
 
 /**
+ * What a decision is made about: everything the decision model may look at.
+ * Plain text, or a JSON object/array — pass structured state as-is (the user's
+ * message plus the current screen, a draft the model wrote, the arguments of a
+ * tool call) rather than flattening it into prose. Up to ~32k tokens.
+ */
+type MaypopAiDecisionState = string | Record<string, unknown> | unknown[];
+
+/** A question's wording, or one criterion: prose, or structured JSON. */
+type MaypopAiDecisionInstructions = string | Record<string, unknown> | unknown[];
+
+/**
+ * One closed question for {@link MaypopAi.decide}. Every question is answered
+ * independently over the same `state`; its key in the request's `questions`
+ * map is the key its answer comes back under. The `criteria` wording matters
+ * more than the `instructions`: describe each side or option as the model
+ * should recognise it IN THE STATE ("an explicit request to remove, wipe, or
+ * reset data"), not as a label.
+ */
+type MaypopAiDecisionQuestion =
+  /**
+   * A yes/no question, answered as the probability of "true" (upstream calls
+   * this a "noul"). `criteria.true` / `criteria.false` describe each side.
+   */
+  | {
+      type: "noul";
+      instructions: MaypopAiDecisionInstructions;
+      criteria: {
+        true: MaypopAiDecisionInstructions;
+        false: MaypopAiDecisionInstructions;
+      };
+    }
+  /**
+   * Pick one of a fixed set of options. `criteria` maps each option key to
+   * what it covers; the answer names the winning key and gives a probability
+   * per option. Include a catch-all option ("other", "chat") so the model has
+   * somewhere to put input that fits none of the real ones.
+   */
+  | {
+      type: "choice";
+      instructions: MaypopAiDecisionInstructions;
+      criteria: Record<string, MaypopAiDecisionInstructions>;
+    }
+  /**
+   * Rate the state on an ordered scale. `criteria` lists the levels from
+   * lowest (index 0) to highest; the answer is a probability-weighted position
+   * on that index scale, plus a probability per level.
+   */
+  | {
+      type: "score";
+      instructions: MaypopAiDecisionInstructions;
+      criteria: string[];
+    };
+
+/**
+ * A decisions request — the OpenRouter decisions body, forwarded verbatim.
+ * There is NO `model` field: the platform pins the decision model server-side
+ * (one is ignored if sent). The response arrives as
+ * {@link MaypopAiDecisionResponse}.
+ */
+interface MaypopAiDecisionRequest {
+  /** What to decide about. See {@link MaypopAiDecisionState}. */
+  state: MaypopAiDecisionState;
+  /**
+   * Named questions, answered independently. Name the keys for what they
+   * decide (`route`, `destructive`, `urgency`) — they come back as
+   * `answers[name]`. At least one is required.
+   */
+  questions: Record<string, MaypopAiDecisionQuestion>;
+  /**
+   * Optional id grouping related calls (one conversation, one editing
+   * session) for provider-side continuity. Scoped to the current user
+   * server-side, so two viewers can never share one.
+   */
+  session_id?: string;
+  /** Any other decision-model field. */
+  [key: string]: unknown;
+}
+
+/**
+ * The answer to one {@link MaypopAiDecisionQuestion}, under the same key.
+ * Discriminate on `type`. Every probability is 0..1.
+ */
+type MaypopAiDecisionAnswer =
+  /** `noul` is the probability the answer is "true". 0.96 means almost
+   *  certainly yes; values near 0.5 mean the state doesn't say. */
+  | { type: "noul"; noul: number }
+  /**
+   * `choice` is the winning option key. `probabilities` compares every option
+   * (use it for a runner-up, or to show "did you mean…" when the top two are
+   * close); `confidence` summarises how concentrated that distribution is.
+   */
+  | {
+      type: "choice";
+      choice: string;
+      confidence?: number;
+      probabilities?: Record<string, number>;
+    }
+  /**
+   * `score` is the probability-weighted position on the level index scale —
+   * e.g. `1.99` on a three-level scale means "almost certainly the top
+   * level". `probabilities` and `legend` are keyed by level index as strings
+   * (`"0"`, `"1"`, …); `legend` echoes the level descriptions.
+   */
+  | {
+      type: "score";
+      score: number;
+      confidence?: number;
+      probabilities?: Record<string, number>;
+      legend?: Record<string, string>;
+    };
+
+/** What {@link MaypopAi.decide} resolves with. */
+interface MaypopAiDecisionResponse {
+  id: string;
+  /** The decision model that answered — informational only, and may change. */
+  model: string;
+  provider?: string;
+  /** One answer per question, under the question's key. */
+  answers: Record<string, MaypopAiDecisionAnswer>;
+  /** Token counts and the provider's cost in USD, for your own accounting. */
+  usage: { input_tokens: number; output_tokens: number; cost: number };
+  [key: string]: unknown;
+}
+
+/**
  * The app's gateway to the AI models. Calls run through the Maypop backend
  * using server-side provider keys (never exposed to the app) and are gated by
  * the `ai:use` scope — so a template (e.g. an AI game master) can let a model
@@ -694,8 +821,11 @@ interface MaypopAi {
    * });
    * ```
    *
-   * STRUCTURED OUTPUT: when you ask the model for JSON to drive app logic, ask
-   * for it in the prompt but never trust the reply to be clean — models often
+   * STRUCTURED OUTPUT: if the JSON you want is only a label, a yes/no, or a
+   * score, don't ask a chat model for it at all — {@link MaypopAi.decide}
+   * returns exactly that, typed, with nothing to parse. When you do need
+   * richer JSON to drive app logic, ask for it in the prompt but never trust
+   * the reply to be clean — models often
    * wrap JSON in a ` ```json ` code fence even when told not to, so a bare
    * `JSON.parse(content)` throws at runtime. Strip fences and trim first, and
    * wrap the parse in try/catch so a malformed reply degrades gracefully (retry
@@ -716,6 +846,70 @@ interface MaypopAi {
    * ```
    */
   chat(request: MaypopAiRequest): Promise<Record<string, unknown>>;
+  /**
+   * Ask the decision model one or more CLOSED questions about a piece of
+   * state and resolve with calibrated probabilities — never free text. See
+   * {@link MaypopAiDecisionQuestion} for the three question types (yes/no,
+   * pick-one, rate-on-a-scale) and {@link MaypopAiDecisionAnswer} for what
+   * comes back.
+   *
+   * PREFER THIS over `chat({ model: "fast" })` whenever the answer is one of a
+   * fixed set: classifying input, routing a message to a screen, gating a
+   * destructive action, checking or ranking something a chat model wrote. It
+   * answers in well under a second, costs a small fraction of a chat call,
+   * and returns typed numbers, so there is nothing to parse and nothing to
+   * go wrong parsing. It replaces the fence-stripping STRUCTURED OUTPUT
+   * pattern on {@link MaypopAi.chat} wherever the JSON you wanted was only a
+   * label, a boolean, or a score.
+   *
+   * It CANNOT write anything — no explanations, no text. Pair the two: decide
+   * first (which screen? is this safe?), then generate with
+   * {@link MaypopAi.stream}.
+   *
+   * ```js
+   * const { answers } = await maypop.ai.decide({
+   *   state: { message: input.value, screen: currentScreen },
+   *   questions: {
+   *     route: {
+   *       type: "choice",
+   *       instructions: "Which screen should handle this message?",
+   *       criteria: {
+   *         inventory: "asks about items, gear, or stock",
+   *         quests: "asks about quests, goals, or objectives",
+   *         chat: "anything else — small talk, questions for the narrator",
+   *       },
+   *     },
+   *     destructive: {
+   *       type: "noul",
+   *       instructions: "Does the user want to delete or reset data?",
+   *       criteria: {
+   *         true: "an explicit request to remove, wipe, or start over",
+   *         false: "no removal intent",
+   *       },
+   *     },
+   *   },
+   * });
+   * // Cheap to ask, costly to get wrong -> act on a LOW probability.
+   * if (answers.destructive.noul > 0.35) return confirmDelete();
+   * navigate(answers.route.choice);
+   * ```
+   *
+   * THRESHOLDS: tune each cutoff to the cost of that mistake, not to 0.5.
+   * Gating something irreversible, act on a low probability (0.2–0.4).
+   * Auto-applying a label the user can undo with one tap, wait for a high one
+   * (0.8+). When a `choice` answer's top two `probabilities` are close, show
+   * both instead of picking silently.
+   *
+   * Cheap enough to call on every interaction — it needs no explicit
+   * "Generate" gesture, unlike {@link MaypopAi.image}. It is still metered and
+   * gated like every AI call: `maypop/ai-limit`, `maypop/sign-in-required`,
+   * and `maypop/forbidden` behave exactly as for {@link MaypopAi.chat}.
+   *
+   * There is NO `model` field — the platform pins the decision model
+   * server-side. Preview: the model behind this is in beta upstream; the
+   * fields above are stable, new optional ones may appear.
+   */
+  decide(request: MaypopAiDecisionRequest): Promise<MaypopAiDecisionResponse>;
   /**
    * Generate images from a text prompt — or edit / restyle existing ones by
    * also passing `image` (see {@link MaypopAiImageRequest}). Resolves with
@@ -1649,7 +1843,7 @@ interface Maypop {
   // #endregion capability:drive
 
   // #region capability:ai
-  /** The app's AI gateway (chat, images, music, audio, voices, sound effects, transcription) — gated by `ai:use`. See {@link MaypopAi}. */
+  /** The app's AI gateway (chat, decisions, images, music, audio, voices, sound effects, transcription) — gated by `ai:use`. See {@link MaypopAi}. */
   readonly ai: MaypopAi;
   // #endregion capability:ai
 

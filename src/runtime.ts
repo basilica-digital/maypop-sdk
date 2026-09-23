@@ -1869,8 +1869,8 @@
   // server-side provider keys (never exposed to the app) and are gated by the
   // ai:use scope. Chat requests/responses are OpenAI-compatible shapes, except
   // `model` is a named tier ("fast" | "smart") the server resolves to a
-  // provider model — the app never names a raw model. Image generation takes
-  // no model at all (the server pins one).
+  // provider model — the app never names a raw model. Decisions and image
+  // generation take no model at all (the server pins one).
   const ai = {
     /** List the model tiers this app may call ({ data: [{ id, description }] }). */
     async models() {
@@ -1889,6 +1889,18 @@
       await readyPromise;
       requireAi("use AI");
       return api("POST", "/ai/chat/completions", { ...request, stream: false });
+    },
+    /**
+     * Ask the decision model closed questions about `state` and resolve with
+     * { id, model, answers: { [name]: { type, noul | choice | score, ... } },
+     * usage }. `request` is { state, questions, session_id? } (see
+     * MaypopAiDecisionRequest in v1.d.ts) — forwarded verbatim; no model, the
+     * server pins one.
+     */
+    async decide(request) {
+      await readyPromise;
+      requireAi("use AI");
+      return api("POST", "/ai/decisions", request);
     },
     /**
      * Stream a chat completion. Calls onDelta(text, event) for each token as it
