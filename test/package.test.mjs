@@ -77,6 +77,7 @@ test("the package export is the hosted window.maypop object", async () => {
   assert.equal(typeof module.maypop.kv.subscribe, "function");
   assert.equal(typeof module.maypop.drive.write, "function");
   assert.equal(typeof module.maypop.ai.chat, "function");
+  assert.equal(typeof module.maypop.ai.decide, "function");
 });
 
 test("host-provided chunks remain runtime imports for framework bundlers", async () => {

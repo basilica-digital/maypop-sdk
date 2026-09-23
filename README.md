@@ -162,7 +162,7 @@ read-only or non-data capabilities through the account authenticated by
 }
 ```
 
-`ai` includes chat completions, streaming, images, video, audio,
+`ai` includes chat completions, streaming, decisions, images, video, audio,
 transcription, and `maypop.agent` (the development host serves its lazy browser
 chunk). These calls use the selected account's real allowance and can consume
 credits. `members` reads the real app roster, `link` enables server-side URL
