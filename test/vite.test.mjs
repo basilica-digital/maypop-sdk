@@ -175,7 +175,7 @@ test("the Vite plugin hosts and persists sandbox KV and Drive", async () => {
     assert.equal(pulled.patch[1].value.value, 3);
     assert.equal(
       pulled.patch[1].value.author,
-      JSON.parse(await readFile(join(root, ".maypop/config.json"), "utf8"))
+      JSON.parse(await readFile(join(root, ".maypop/local/config.json"), "utf8"))
         .viewerId,
     );
     assert.match(pulled.patch[1].value.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
@@ -316,12 +316,12 @@ test("the Vite plugin hosts and persists sandbox KV and Drive", async () => {
     );
 
     const driveIndex = JSON.parse(
-      await readFile(join(root, ".maypop/drive/index.json"), "utf8"),
+      await readFile(join(root, ".maypop/local/drive/index.json"), "utf8"),
     );
     assert.equal(driveIndex.schemaVersion, 1);
     assert.equal(driveIndex.files[0].name, "hello.txt");
     const kvIndex = JSON.parse(
-      await readFile(join(root, ".maypop/kv.json"), "utf8"),
+      await readFile(join(root, ".maypop/local/kv.json"), "utf8"),
     );
     assert.equal(kvIndex.schemaVersion, 1);
   } finally {
@@ -379,15 +379,15 @@ test("the plugin runs inside Vite with base paths and routed documents", async (
 test("invalid persisted data fails clearly without leaving the directory locked", async () => {
   const root = await mkdtemp(join(tmpdir(), "maypop-invalid-data-test-"));
   const dataDirectory = join(root, ".maypop");
-  await mkdir(dataDirectory, { recursive: true });
-  await writeFile(join(dataDirectory, "kv.json"), "not json");
+  await mkdir(join(dataDirectory, "local"), { recursive: true });
+  await writeFile(join(dataDirectory, "local", "kv.json"), "not json");
 
   try {
     await assert.rejects(
       startMiddlewareSandbox(root),
       /kv\.json is not valid JSON/,
     );
-    await rm(join(dataDirectory, "kv.json"));
+    await rm(join(dataDirectory, "local", "kv.json"));
     const sandbox = await startMiddlewareSandbox(root);
     await sandbox.close();
   } finally {
@@ -398,9 +398,9 @@ test("invalid persisted data fails clearly without leaving the directory locked"
 test("development config rejects live notifications outside connected mode", async () => {
   const root = await mkdtemp(join(tmpdir(), "maypop-invalid-dev-config-test-"));
   const dataDirectory = join(root, ".maypop");
-  await mkdir(dataDirectory, { recursive: true });
+  await mkdir(join(dataDirectory, "local"), { recursive: true });
   await writeFile(
-    join(dataDirectory, "dev.json"),
+    join(dataDirectory, "local", "dev.json"),
     JSON.stringify({ mode: "hybrid", notifications: "live" }),
   );
 
@@ -417,8 +417,8 @@ test("development config rejects live notifications outside connected mode", asy
 test("development config requires a JSON object", async () => {
   const root = await mkdtemp(join(tmpdir(), "maypop-invalid-dev-shape-test-"));
   const dataDirectory = join(root, ".maypop");
-  await mkdir(dataDirectory, { recursive: true });
-  await writeFile(join(dataDirectory, "dev.json"), "null");
+  await mkdir(join(dataDirectory, "local"), { recursive: true });
+  await writeFile(join(dataDirectory, "local", "dev.json"), "null");
 
   try {
     await assert.rejects(
@@ -433,9 +433,9 @@ test("development config requires a JSON object", async () => {
 test("sandbox viewer fixtures exercise read-only, audience, and sign-in transitions", async () => {
   const root = await mkdtemp(join(tmpdir(), "maypop-viewer-fixture-test-"));
   const dataDirectory = join(root, ".maypop");
-  await mkdir(dataDirectory, { recursive: true });
+  await mkdir(join(dataDirectory, "local"), { recursive: true });
   await writeFile(
-    join(dataDirectory, "dev.json"),
+    join(dataDirectory, "local", "dev.json"),
     JSON.stringify({
       mode: "sandbox",
       viewer: {
@@ -503,7 +503,7 @@ test("sandbox viewer fixtures exercise read-only, audience, and sign-in transiti
 test("sandbox MCP fixtures support discovery and deterministic tool calls", async () => {
   const root = await mkdtemp(join(tmpdir(), "maypop-mcp-fixture-test-"));
   const dataDirectory = join(root, ".maypop");
-  await mkdir(dataDirectory, { recursive: true });
+  await mkdir(join(dataDirectory, "local"), { recursive: true });
   await writeFile(
     join(dataDirectory, "mcp.json"),
     JSON.stringify({
@@ -577,9 +577,9 @@ test("sandbox MCP fixtures support discovery and deterministic tool calls", asyn
 test("strict sandbox storage enforces the committed KV policy", async () => {
   const root = await mkdtemp(join(tmpdir(), "maypop-kv-policy-test-"));
   const dataDirectory = join(root, ".maypop");
-  await mkdir(dataDirectory, { recursive: true });
+  await mkdir(join(dataDirectory, "local"), { recursive: true });
   await writeFile(
-    join(dataDirectory, "dev.json"),
+    join(dataDirectory, "local", "dev.json"),
     JSON.stringify({
       mode: "sandbox",
       strictStorage: true,
@@ -771,7 +771,7 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
   assert.ok(apiAddress && typeof apiAddress !== "string");
   const apiUrl = `http://127.0.0.1:${apiAddress.port}`;
 
-  await mkdir(dataDirectory, { recursive: true });
+  await mkdir(join(dataDirectory, "local"), { recursive: true });
   await mkdir(profileDirectory, { recursive: true });
   execFileSync("git", ["init", "-b", "main"], {
     cwd: root,
@@ -808,7 +808,7 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
     }),
   );
   await writeFile(
-    join(dataDirectory, "dev.json"),
+    join(dataDirectory, "local", "dev.json"),
     JSON.stringify({
       mode: "hybrid",
       profile: "dev",
@@ -876,10 +876,10 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
     await sandbox.close();
     sandbox = undefined;
     await writeFile(
-      join(dataDirectory, "dev.json"),
+      join(dataDirectory, "local", "dev.json"),
       JSON.stringify({ mode: "connected", notifications: "inspect" }),
     );
-    await writeFile(join(dataDirectory, "kv.json"), "not local data");
+    await writeFile(join(dataDirectory, "local", "kv.json"), "not local data");
     remoteRequests = 0;
     sandbox = await startMiddlewareSandbox(root);
     const connectedHtml = await fetch(sandbox.url, {
