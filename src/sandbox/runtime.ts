@@ -1,13 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import {
-  closeSync,
-  createReadStream,
-  openSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { createReadStream } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import {
   createServer,
@@ -34,6 +27,11 @@ import {
   type NotificationRecord,
   notificationInspectorHtml,
 } from "./notification-inspector.js";
+import {
+  acquireLocalLock,
+  moveLegacyLocalData,
+  prepareLocalDirectory,
+} from "./local-data.js";
 
 const MAX_BODY_BYTES = 51 * 1024 * 1024;
 export const SANDBOX_APP_QUERY = "__maypop_app";
@@ -772,47 +770,6 @@ export interface MaypopSandboxRuntime {
   close(): void;
 }
 
-function acquireDataDirectoryLock(dataDirectory: string): () => void {
-  const path = join(dataDirectory, ".lock");
-
-  function openLock(): number {
-    try {
-      return openSync(path, "wx");
-    } catch (error) {
-      if ((error as { code?: string }).code !== "EEXIST") throw error;
-      const owner = Number.parseInt(readFileSync(path, "utf8"), 10);
-      if (Number.isInteger(owner)) {
-        try {
-          process.kill(owner, 0);
-        } catch (processError) {
-          if ((processError as { code?: string }).code === "ESRCH") {
-            unlinkSync(path);
-            return openLock();
-          }
-        }
-      }
-      throw new Error(
-        `Maypop sandbox data at ${dataDirectory} is already in use by another development server.`,
-        { cause: error },
-      );
-    }
-  }
-
-  const descriptor = openLock();
-  writeFileSync(descriptor, `${process.pid}\n`);
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    closeSync(descriptor);
-    try {
-      unlinkSync(path);
-    } catch (error) {
-      if ((error as { code?: string }).code !== "ENOENT") throw error;
-    }
-  };
-}
-
 type ByteRange = { start: number; end: number };
 
 function parseByteRange(header: string, size: number): ByteRange | undefined {
@@ -929,9 +886,11 @@ export async function createMaypopSandboxRuntime(
     ? configuredDirectory
     : resolve(root, configuredDirectory);
   await mkdir(dataDirectory, { recursive: true });
-  const releaseLock = acquireDataDirectoryLock(dataDirectory);
+  const localDirectory = await prepareLocalDirectory(dataDirectory);
+  const releaseLock = acquireLocalLock(localDirectory, dataDirectory);
   try {
-    const development = await loadDevelopmentConfig(dataDirectory);
+    await moveLegacyLocalData(dataDirectory, localDirectory);
+    const development = await loadDevelopmentConfig(localDirectory);
     const remoteSession =
       development.mode === "sandbox"
         ? undefined
@@ -954,7 +913,7 @@ export async function createMaypopSandboxRuntime(
       }
     }
     const usesLocalData = development.mode !== "connected";
-    const driveDirectory = join(dataDirectory, "drive");
+    const driveDirectory = join(localDirectory, "drive");
     const driveFilesDirectory = join(driveDirectory, "files");
     const pendingDirectory = join(driveDirectory, "pending");
     if (usesLocalData) {
@@ -965,14 +924,14 @@ export async function createMaypopSandboxRuntime(
 
     const localIdentity = remoteSession
       ? undefined
-      : await loadIdentity(dataDirectory);
+      : await loadIdentity(localDirectory);
     const identity: SandboxIdentity = remoteSession
       ? { schemaVersion: 1, appId: remoteSession.appId, viewerId: remoteMe!.id }
       : localIdentity!;
     const token = randomBytes(32).toString("base64url");
     const appRequestToken = randomBytes(18).toString("base64url");
     let sandboxSignedIn = development.viewer?.anonymous !== true;
-    const mockMcpPath = join(dataDirectory, "mcp.json");
+    const mockMcpPath = join(localDirectory, "mcp.json");
     const emptyMockMcp: MockMcpData = { schemaVersion: 1, servers: [] };
     const mockMcp =
       development.mode === "connected"
@@ -987,7 +946,7 @@ export async function createMaypopSandboxRuntime(
       mockMcp.servers.length > 0
     ) {
       throw new Error(
-        "Hybrid MCP cannot use both real app integrations and .maypop/mcp.json fixtures. Remove the fixture or remove `mcp` from remoteCapabilities.",
+        "Hybrid MCP cannot use both real app integrations and .maypop/local/mcp.json fixtures. Remove the fixture or remove `mcp` from remoteCapabilities.",
       );
     }
     const kvPolicyPath = resolve(root, ".maypop/kv-policy.json");
@@ -1095,7 +1054,7 @@ export async function createMaypopSandboxRuntime(
       return [...scopeSet].join(" ");
     }
     const initialScopes = developmentScopes();
-    const kvPath = join(dataDirectory, "kv.json");
+    const kvPath = join(localDirectory, "kv.json");
     const emptyKvData: KvData = {
       schemaVersion: 1,
       version: 0,
@@ -1142,7 +1101,7 @@ export async function createMaypopSandboxRuntime(
     if (usesLocalData && migrateDriveData)
       await writeJsonAtomic(drivePath, driveData);
     const drive = new JsonStore(drivePath, driveData as DriveData);
-    const notificationPath = join(dataDirectory, "notifications.json");
+    const notificationPath = join(localDirectory, "notifications.json");
     const notificationData = await readJson<Partial<NotificationData>>(
       notificationPath,
       { schemaVersion: 1, notifications: [] },

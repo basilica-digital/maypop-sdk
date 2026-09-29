@@ -123,8 +123,9 @@ export default withMaypop({
 The framework's normal development command then serves its URL as a Maypop host
 with the application inside it, including when a routed application opens or
 refreshes a deep URL. The app uses the production SDK handshake, iframe
-permissions, and API shapes. Shared KV state persists to `.maypop/kv.json`,
-while Drive metadata and bytes persist under `.maypop/drive/`.
+permissions, and API shapes. Shared KV state persists to
+`.maypop/local/kv.json`, while Drive metadata and bytes persist under
+`.maypop/local/drive/`.
 
 The Next.js binding also adds the machine's active network addresses to
 `allowedDevOrigins`, so opening the development server from another device on
@@ -141,13 +142,13 @@ Maypop product shell rather than an app API.
 `maypop.notify()` is captured by default rather than delivered. Open the
 Maypop badge in the development host, or visit `/_maypop/notifications`, to
 inspect the requested and resolved recipients, title, body, and deep link.
-Captured calls persist in `.maypop/notifications.json`.
+Captured calls persist in `.maypop/local/notifications.json`.
 
 ### Authenticated development
 
-Create `.maypop/dev.json` to opt this machine into authenticated capabilities.
-Do not commit the file: it selects a developer account and can enable access to
-real app data or billable AI calls.
+Create `.maypop/local/dev.json` to opt this machine into authenticated
+capabilities. Git ignores it with the rest of `.maypop/local/`: it selects a
+developer account and can enable access to real app data or billable AI calls.
 
 Hybrid mode keeps KV and Drive local while forwarding an explicit set of
 read-only or non-data capabilities through the account authenticated by
@@ -173,7 +174,7 @@ runtime locally. KV and Drive remain local, and notifications remain in the
 inspector. Connect a server with `maypop mcp connect`, then run `maypop mcp
 link` in the app repository before starting the development server. A hybrid
 configuration cannot combine the real `mcp` capability with
-`.maypop/mcp.json` fixtures.
+`.maypop/local/mcp.json` fixtures.
 
 Connected mode skips local KV/Drive initialization and sends the entire app API
 surface to the real app:
@@ -244,7 +245,7 @@ platform.
 
 ### Mock integrations and host actions
 
-Add `.maypop/mcp.json` to exercise MCP discovery, tool wrapping, calls, and
+Add `.maypop/local/mcp.json` to exercise MCP discovery, tool wrapping, calls, and
 agent tools without invoking a real external integration:
 
 ```json
@@ -295,16 +296,20 @@ The local host is development tooling, not a security boundary. Keep the
 development server bound to a trusted interface unless the project itself is
 safe to expose.
 
-Ignore generated development state without hiding a committed KV policy:
+What belongs to this machine lives in `.maypop/local/`: the local identity,
+`dev.json`, MCP fixtures, KV and Drive data, captured notifications, and the
+lock. The development server creates it with its own `.gitignore`, so it stays
+out of Git even when the app's `.gitignore` does not mention it.
+`.maypop/kv-policy.json` stays beside it and is committed: the platform reads it
+from the app's source and applies it with each published version. On its first
+run, the server moves what older versions wrote directly into `.maypop/` into
+`.maypop/local/`. It leaves an old `.maypop/.lock` where it is and no longer reads
+it; untrack one that was committed with `git rm --cached .maypop/.lock`.
 
-```gitignore
-.maypop/.lock
-.maypop/config.json
-.maypop/dev.json
-.maypop/drive/
-.maypop/kv.json
-.maypop/notifications.json
-```
+The lock holds only while the process that wrote it runs. It records that
+process's PID and start time, so a lock left behind by a server that was
+killed, or whose sandbox restarted and gave its PID to another process, is
+taken over. A server that exits without closing still removes its lock.
 
 The bindings only affect framework development servers. Production builds
 remain ordinary app bundles. `maypop init` records the matching build adapter

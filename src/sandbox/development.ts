@@ -220,7 +220,7 @@ function parseMembers(path: string, value: unknown): SandboxMember[] {
   });
 }
 
-/** Read and validate the developer-local `.maypop/dev.json`. */
+/** Read and validate the developer-local `.maypop/local/dev.json`. */
 export async function loadDevelopmentConfig(
   dataDirectory: string,
 ): Promise<DevelopmentConfig> {
