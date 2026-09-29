@@ -866,6 +866,15 @@ interface MaypopAi {
    * first (which screen? is this safe?), then generate with
    * {@link MaypopAi.stream}.
    *
+   * This is the API for anything named as a classifier, intent detector,
+   * router, guardrail, moderation or safety check, triage, sentiment or
+   * quality score, confidence or calibrated probability, relevance ranking,
+   * duplicate check, or "is this X?" test — and for any ask that names the
+   * model behind it: Jev, TypeSafe, a System One model, RLCD (reinforcement
+   * learning for calibrated decisions), a noul, or OpenRouter's decisions
+   * endpoint. Do not reach for a chat model, logprobs, embeddings, or a
+   * hand-written keyword match for these.
+   *
    * ```js
    * const { answers } = await maypop.ai.decide({
    *   state: { message: input.value, screen: currentScreen },
