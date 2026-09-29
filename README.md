@@ -173,7 +173,7 @@ runtime locally. KV and Drive remain local, and notifications remain in the
 inspector. Connect a server with `maypop mcp connect`, then run `maypop mcp
 link` in the app repository before starting the development server. A hybrid
 configuration cannot combine the real `mcp` capability with
-`.maypop/mcp.json` fixtures.
+`.maypop/local/mcp.json` fixtures.
 
 Connected mode skips local KV/Drive initialization and sends the entire app API
 surface to the real app:
@@ -244,7 +244,7 @@ platform.
 
 ### Mock integrations and host actions
 
-Add `.maypop/mcp.json` to exercise MCP discovery, tool wrapping, calls, and
+Add `.maypop/local/mcp.json` to exercise MCP discovery, tool wrapping, calls, and
 agent tools without invoking a real external integration:
 
 ```json
@@ -296,18 +296,19 @@ development server bound to a trusted interface unless the project itself is
 safe to expose.
 
 What belongs to this machine lives in `.maypop/local/`: the local identity,
-`dev.json`, KV and Drive data, captured notifications, and the lock. The
-development server creates it with its own `.gitignore`, so it stays out of Git
-even when the app's `.gitignore` does not mention it. The files beside it,
-`.maypop/kv-policy.json` and `.maypop/mcp.json`, belong to the app and are
-committed. On its first run, the server moves what older versions wrote
-directly into `.maypop/` into `.maypop/local/`. It leaves an old `.maypop/.lock`
-where it is; untrack one that was committed with `git rm --cached
-.maypop/.lock`.
+`dev.json`, MCP fixtures, KV and Drive data, captured notifications, and the
+lock. The development server creates it with its own `.gitignore`, so it stays
+out of Git even when the app's `.gitignore` does not mention it.
+`.maypop/kv-policy.json` stays beside it and is committed: the platform reads it
+from the app's source and applies it with each published version. On its first
+run, the server moves what older versions wrote directly into `.maypop/` into
+`.maypop/local/`. It leaves an old `.maypop/.lock` where it is and no longer reads
+it; untrack one that was committed with `git rm --cached .maypop/.lock`.
 
-The lock records the process that holds it and when that process started, so
-a lock left behind by a stopped server is taken over, even when a restart gave
-its PID to another process.
+The lock holds only while the process that wrote it runs. It records that
+process's PID and start time, so a lock left behind by a server that was
+killed, or whose sandbox restarted and gave its PID to another process, is
+taken over. A server that exits without closing still removes its lock.
 
 The bindings only affect framework development servers. Production builds
 remain ordinary app bundles. `maypop init` records the matching build adapter

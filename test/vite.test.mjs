@@ -505,7 +505,7 @@ test("sandbox MCP fixtures support discovery and deterministic tool calls", asyn
   const dataDirectory = join(root, ".maypop");
   await mkdir(join(dataDirectory, "local"), { recursive: true });
   await writeFile(
-    join(dataDirectory, "mcp.json"),
+    join(dataDirectory, "local", "mcp.json"),
     JSON.stringify({
       schemaVersion: 1,
       servers: [

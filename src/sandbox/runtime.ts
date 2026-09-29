@@ -931,7 +931,7 @@ export async function createMaypopSandboxRuntime(
     const token = randomBytes(32).toString("base64url");
     const appRequestToken = randomBytes(18).toString("base64url");
     let sandboxSignedIn = development.viewer?.anonymous !== true;
-    const mockMcpPath = join(dataDirectory, "mcp.json");
+    const mockMcpPath = join(localDirectory, "mcp.json");
     const emptyMockMcp: MockMcpData = { schemaVersion: 1, servers: [] };
     const mockMcp =
       development.mode === "connected"
@@ -946,7 +946,7 @@ export async function createMaypopSandboxRuntime(
       mockMcp.servers.length > 0
     ) {
       throw new Error(
-        "Hybrid MCP cannot use both real app integrations and .maypop/mcp.json fixtures. Remove the fixture or remove `mcp` from remoteCapabilities.",
+        "Hybrid MCP cannot use both real app integrations and .maypop/local/mcp.json fixtures. Remove the fixture or remove `mcp` from remoteCapabilities.",
       );
     }
     const kvPolicyPath = resolve(root, ".maypop/kv-policy.json");

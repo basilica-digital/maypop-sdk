@@ -13,10 +13,10 @@ import { join } from "node:path";
 
 /**
  * Where the development host keeps what belongs to one machine: the local
- * identity, `dev.json`, KV and Drive data, captured notifications, and the
- * lock. It ignores itself in Git, so an app never commits it even when its
- * own `.gitignore` says nothing. The files beside it (`kv-policy.json`,
- * `mcp.json`) are the app's and are committed.
+ * identity, `dev.json`, MCP fixtures, KV and Drive data, captured
+ * notifications, and the lock. It ignores itself in Git, so an app never
+ * commits it even when its own `.gitignore` says nothing. `kv-policy.json`
+ * stays beside it: the platform reads it from the app's committed source.
  */
 export const LOCAL_DIRECTORY = "local";
 
@@ -27,6 +27,7 @@ const LEGACY_LOCAL_ENTRIES = [
   "kv.json",
   "drive",
   "notifications.json",
+  "mcp.json",
 ];
 
 const LOCAL_GITIGNORE = "# Maypop development data for this machine\n*\n";
@@ -112,9 +113,12 @@ function readOwner(path: string): LockOwner | null {
 const heldLocks = new Set<string>();
 
 /**
- * Whether a lock no longer means a development server holds the data: its
- * process is gone, is another process that reuses its PID after a restart,
- * or is this one without holding it.
+ * Whether a lock no longer means a development server holds the data. It
+ * holds only while the very process that wrote it runs: a gone PID, a PID a
+ * restart gave to another process, and one naming this process without
+ * holding it are stale. So is one with no start time where this system can
+ * read them, since nothing then shows its PID was not reused. Where it cannot,
+ * a live PID is all there is to go on.
  */
 function isStaleLock(owner: LockOwner | null, path: string): boolean {
   if (!owner || !Number.isInteger(owner.pid) || owner.pid <= 0) return true;
@@ -124,9 +128,9 @@ function isStaleLock(owner: LockOwner | null, path: string): boolean {
   } catch (error) {
     if ((error as { code?: string }).code === "ESRCH") return true;
   }
-  if (!owner.start) return false;
   const current = processStart(owner.pid);
-  return current !== undefined && current !== owner.start;
+  if (current === undefined) return false;
+  return current !== owner.start;
 }
 
 const LOCK_ATTEMPTS = 3;
@@ -178,9 +182,10 @@ export function acquireLocalLock(
   writeFileSync(descriptor, `${JSON.stringify(owner)}\n`);
   heldLocks.add(path);
   let released = false;
-  return () => {
+  const release = () => {
     if (released) return;
     released = true;
+    process.off("exit", release);
     heldLocks.delete(path);
     closeSync(descriptor);
     try {
@@ -189,4 +194,9 @@ export function acquireLocalLock(
       if ((error as { code?: string }).code !== "ENOENT") throw error;
     }
   };
+  // A server that exits without closing (Ctrl-C, or a signal its framework
+  // turns into an exit) still clears its lock; one killed outright leaves it
+  // for the next server to find stale.
+  process.once("exit", release);
+  return release;
 }
