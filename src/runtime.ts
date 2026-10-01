@@ -2683,6 +2683,24 @@
     get theme() {
       return theme ?? "dark";
     },
+    /**
+     * Glow colour for the host, `[r, g, b]` 0–255, or null to let the host
+     * sample. Handed to the injected ambient-palette reporter, which owns
+     * posting to the host.
+     */
+    setAmbientColor(rgb) {
+      if (
+        rgb !== null &&
+        !(
+          Array.isArray(rgb) &&
+          rgb.length === 3 &&
+          rgb.every((c) => typeof c === "number" && c >= 0 && c <= 255)
+        )
+      ) {
+        throw new TypeError("setAmbientColor: expected [r, g, b] with 0-255 channels, or null");
+      }
+      dispatchEvent(new CustomEvent("maypop:ambient-color", { detail: rgb }));
+    },
     /** Granted scopes, for capability sniffing. */
     get permissions() {
       return scopes();
