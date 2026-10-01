@@ -225,14 +225,9 @@
     if (e.data && e.data.type === "maypop:ambient-start") start();
   });
 
-  // The app's own colour, validated by the runtime. Report it on the next
-  // tick rather than waiting out the interval; before the host asks there is
-  // nothing to report to, and start() will pick it up.
+  // The app's own colour, validated by the runtime.
   addEventListener("maypop:ambient-color", function (e) {
     appColor = e.detail || null;
-    if (!started || document.hidden) return;
-    clearTimeout(timer);
-    timer = setTimeout(tick, 0);
   });
 
   // Two orderings to cover, so both sides speak first. If the host was
