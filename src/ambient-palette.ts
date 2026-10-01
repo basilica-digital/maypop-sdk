@@ -15,8 +15,9 @@
  *     and for video it re-reads per tick, which is what makes the glow track
  *     the frame the way the reference does. A <canvas> is never read: drawing
  *     an accelerated one forces a synchronous GPU readback on the app's main
- *     thread (10-30 ms a tick for a full-screen game). Canvas apps get their
- *     palette from the surface probe below.
+ *     thread (10-30 ms a tick for a full-screen game). A canvas app names its
+ *     own colour with `maypop.setAmbientColor` (which replaces both sources
+ *     until it passes null), or falls through to the surface probe below.
  *  2. SURFACES — `elementsFromPoint` at five fixed points, taking the first
  *     painted background in each stack. Five hit-tests, no tree walk, no
  *     layout thrash: O(1) whatever the app's DOM looks like.
@@ -52,7 +53,8 @@
   var canvas = null,
     ctx = null,
     lastSent = null,
-    timer = null;
+    timer = null,
+    appColor = null; // set by maypop.setAmbientColor; while set, nothing is sampled
 
   /** Reused offscreen canvas — allocating one per tick is the whole cost. */
   function scratch() {
@@ -186,8 +188,8 @@
   function tick() {
     timer = null;
     if (!document.hidden) {
-      var media = dominantMedia();
-      var rgb = (media && sampleMedia(media)) || sampleSurfaces();
+      var media = appColor ? null : dominantMedia();
+      var rgb = appColor || (media && sampleMedia(media)) || sampleSurfaces();
       if (rgb && changed(rgb)) {
         lastSent = rgb;
         try {
@@ -221,6 +223,16 @@
 
   addEventListener("message", function (e) {
     if (e.data && e.data.type === "maypop:ambient-start") start();
+  });
+
+  // The app's own colour, validated by the runtime. Report it on the next
+  // tick rather than waiting out the interval; before the host asks there is
+  // nothing to report to, and start() will pick it up.
+  addEventListener("maypop:ambient-color", function (e) {
+    appColor = e.detail || null;
+    if (!started || document.hidden) return;
+    clearTimeout(timer);
+    timer = setTimeout(tick, 0);
   });
 
   // Two orderings to cover, so both sides speak first. If the host was

@@ -1976,6 +1976,22 @@ interface Maypop {
   readonly theme: MaypopTheme;
 
   /**
+   * Tell the host which colour to glow behind the app, as `[r, g, b]` with
+   * each channel 0–255. Pass `null` to hand the choice back to the host.
+   *
+   * The host otherwise picks the colour itself from the app's largest
+   * video or image, or from its CSS backgrounds. It never reads a
+   * `<canvas>`, so a canvas-drawn app (a game, a visualiser) glows its
+   * page background unless it calls this. Call it whenever the scene's
+   * dominant colour changes; repeats of a near-identical colour are free.
+   *
+   * ```js
+   * maypop.setAmbientColor([24, 40, 96]); // night level
+   * ```
+   */
+  setAmbientColor(rgb: [number, number, number] | null): void;
+
+  /**
    * Subscribe to a lifecycle event. Returns an unsubscribe function.
    *
    * ```js
