@@ -10,10 +10,13 @@
  *
  * Sampling is deliberately not a screenshot. Two sources, cheapest first:
  *
- *  1. MEDIA — the largest <video>/<canvas>/<img> actually covering a real
- *     share of the viewport, drawn into ONE reused 8x8 canvas. That is a
- *     ~64-pixel read, and for video it re-reads per tick, which is what makes
- *     the glow track the frame the way the reference does.
+ *  1. MEDIA — the largest <video>/<img> actually covering a real share of the
+ *     viewport, drawn into ONE reused 8x8 canvas. That is a ~64-pixel read,
+ *     and for video it re-reads per tick, which is what makes the glow track
+ *     the frame the way the reference does. A <canvas> is never read: drawing
+ *     an accelerated one forces a synchronous GPU readback on the app's main
+ *     thread (10-30 ms a tick for a full-screen game). Canvas apps get their
+ *     palette from the surface probe below.
  *  2. SURFACES — `elementsFromPoint` at five fixed points, taking the first
  *     painted background in each stack. Five hit-tests, no tree walk, no
  *     layout thrash: O(1) whatever the app's DOM looks like.
@@ -72,7 +75,7 @@
   function dominantMedia() {
     var best = null,
       bestArea = viewportArea() * MIN_MEDIA_SHARE;
-    var nodes = document.querySelectorAll("video, canvas, img");
+    var nodes = document.querySelectorAll("video, img");
     // Bounded: an app with hundreds of thumbnails shouldn't pay per node.
     var limit = Math.min(nodes.length, 40);
     for (var i = 0; i < limit; i++) {
@@ -96,7 +99,6 @@
     // sampling it would report black and flash the glow off.
     if (el.tagName === "VIDEO" && (el.readyState < 2 || !el.videoWidth)) return null;
     if (el.tagName === "IMG" && (!el.complete || !el.naturalWidth)) return null;
-    if (el.tagName === "CANVAS" && (!el.width || !el.height)) return null;
     var c = scratch();
     try {
       c.drawImage(el, 0, 0, CANVAS_N, CANVAS_N);
