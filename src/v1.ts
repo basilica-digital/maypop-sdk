@@ -1856,9 +1856,11 @@ interface Maypop {
   signIn(): void;
   /**
    * The deep path this app was opened at — from a {@link MaypopLink.to} link,
-   * a `share()` card, or a notification's `path` — else `null`. Read once at
-   * startup to route the initial screen; a HashRouter applies it
-   * automatically, any other router has to navigate to it.
+   * a `share()` card, or a notification's `path` — else `null`. Set as soon
+   * as the SDK loads, before `ready()`: use it as the initial screen or the
+   * router's initial location so the app opens there in its first render,
+   * rather than waiting for `ready()` and navigating. A HashRouter applies it
+   * automatically.
    */
   readonly launchPath: string | null;
   // #endregion capability:identity
