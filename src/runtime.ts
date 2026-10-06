@@ -15,7 +15,7 @@
  *   iframe.contentWindow.postMessage(
  *     {
  *       type: "maypop:init",
- *       context: { appId, apiBase },
+ *       context: { appId, apiBase, appUrl },
  *       token: { token, expiresIn, scopes },
  *     },
  *     appOrigin,
@@ -129,8 +129,9 @@
   // ----------------------------------------------------------------- state
   let port = null;
   let context = null; // { appId, apiBase }
-  // The deep-link fragment the host put in the iframe URL (notify({ path })).
-  // Captured once at load, before any in-app router rewrites location.hash.
+  // The deep-link fragment the host put in the iframe URL — the path of a
+  // `link.to()` link, a `share()` card, or a `notify({ path })`. Captured once
+  // at load, before any in-app router rewrites location.hash.
   const launchPath = location.hash ? location.hash.slice(1) : null;
   let token = null; // { token, expiresIn, scopes }
   let me = null; // /app-api/me response
@@ -1076,6 +1077,22 @@
     });
   }
 
+  // The host's rule for a deep path (`isValidLaunchPath` in the Maypop
+  // frontend, `valid_app_path` in the backend): site-relative, not readable as
+  // a scheme, host or protocol-relative URL, no control characters, at most
+  // 512 code points. Checked here too so `link.to()` never hands out a link
+  // the host would open at the app's first screen.
+  function isLaunchPath(p) {
+    if (typeof p !== "string" || !p.startsWith("/")) return false;
+    const chars = [...p];
+    if (chars.length < 2 || chars.length > 512) return false;
+    if (chars[1] === "/" || p.includes("\\")) return false;
+    return !chars.some((c) => {
+      const n = c.codePointAt(0);
+      return n <= 0x1f || (n >= 0x7f && n <= 0x9f);
+    });
+  }
+
   // maypop.share({ path, title? }) — HOST action: open a Maypop share card
   // with a copyable deep link to `path`. Same port/timeout pattern as
   // openGroupSettings(). The host resolves the link audience and does the copy.
@@ -1083,7 +1100,7 @@
 
   async function share(opts) {
     await readyPromise;
-    if (!opts || typeof opts.path !== "string" || !opts.path.startsWith("/")) {
+    if (!opts || !isLaunchPath(opts.path)) {
       throw err("maypop/invalid-path", "share: path must be a site-relative string like \"/item/42\"");
     }
     const title =
@@ -2222,6 +2239,29 @@
   // which every session (member or guest) holds.
 
   const link = {
+    /**
+     * The URL that opens this app, or — given a deep `path` like
+     * `"/item/42"` — the URL that opens it on that screen. Synchronous so it
+     * can fill an `href` or go straight to `navigator.clipboard` inside a
+     * click. The host supplies the base on init (`context.appUrl`); the
+     * `launchPath` query is the host's deep-link form, the same one `share()`
+     * and `notify({ path })` produce.
+     */
+    to(path) {
+      if (!context) {
+        throw err("maypop/not-ready", "link.to: await maypop.ready() first");
+      }
+      if (typeof context.appUrl !== "string") {
+        throw err("maypop/unsupported", "link.to: this host does not provide app links");
+      }
+      if (path === undefined) return context.appUrl;
+      if (!isLaunchPath(path)) {
+        throw err("maypop/invalid-path", "link.to: path must be a site-relative string like \"/item/42\"");
+      }
+      const url = new URL(context.appUrl);
+      url.searchParams.set("launchPath", path);
+      return url.href;
+    },
     /**
      * Fetch link-preview metadata for a URL, resolving with
      * `{ url, title?, description?, image?, siteName?, favicon? }` — `url` is
