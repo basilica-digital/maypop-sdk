@@ -1740,9 +1740,30 @@ interface LinkPreview {
  * Only public `http`/`https` URLs are allowed (internal/private hosts are
  * rejected server-side), and the target must return an HTML page. Gated by
  * `identity:read`, which every session holds, so it works for members and
- * read-only share-link guests alike.
+ * read-only guests alike.
  */
 interface MaypopLink {
+  /**
+   * The link that opens this app — or, given a deep `path`, the link that
+   * opens it on that screen. `path` is a site-relative deep path like
+   * `"/item/42"`, the same form as {@link Maypop.launchPath}; whoever opens
+   * the link lands with `launchPath` set to it (with a HashRouter,
+   * automatically). Who can open it is the app's own reach — the same as its
+   * plain URL.
+   *
+   * Synchronous, so it can fill an `href` or go straight to the clipboard
+   * inside a click handler; call it after `maypop.ready()`.
+   *
+   * ```js
+   * copyBtn.onclick = () =>
+   *   navigator.clipboard.writeText(maypop.link.to(`/item/${item.id}`));
+   * ```
+   *
+   * Throws `maypop/invalid-path` for a path that isn't site-relative,
+   * `maypop/not-ready` before `ready()`, and `maypop/unsupported` on a host
+   * that doesn't provide app links.
+   */
+  to(path?: string): string;
   /**
    * Fetch preview metadata for a URL. Resolves with a {@link LinkPreview}
    * (`url` always set; the rest best-effort). Rejects with `maypop/error` for
@@ -1834,9 +1855,12 @@ interface Maypop {
    */
   signIn(): void;
   /**
-   * The path this app was opened at when launched from a deep-linked
-   * notification (the `path` passed to `notify`), else `null`. Read once at
-   * startup to route the initial screen; a HashRouter applies it automatically.
+   * The deep path this app was opened at — from a {@link MaypopLink.to} link,
+   * a `share()` card, or a notification's `path` — else `null`. Set as soon
+   * as the SDK loads, before `ready()`: use it as the initial screen or the
+   * router's initial location so the app opens there in its first render,
+   * rather than waiting for `ready()` and navigating. A HashRouter applies it
+   * automatically.
    */
   readonly launchPath: string | null;
   // #endregion capability:identity
@@ -1899,24 +1923,20 @@ interface Maypop {
   // #endregion capability:mcp
 
   // #region capability:link
-  /** Server-side link unfurling — preview metadata + real og:image for a URL. See {@link MaypopLink}. */
+  /** Deep links into this app, and preview metadata + real og:image for any URL. See {@link MaypopLink}. */
   readonly link: MaypopLink;
   // #endregion capability:link
 
   // #region capability:share
   /**
-   * Open a Maypop share card with a copyable deep link to a screen in this
-   * app. `path` is a site-relative deep path (e.g. `"/item/42"`) — the same
-   * form as `launchPath`; whoever opens the link lands on that screen (with a
-   * HashRouter, automatically). The link is public when the app has an active
-   * share link, otherwise scoped to group members. Resolves once the card is
-   * shown.
+   * Open a Maypop share card holding the {@link MaypopLink.to} link for
+   * `path`, a site-relative deep path (e.g. `"/item/42"`). Use it when you
+   * want Maypop's card; to copy or share the link from your own UI, call
+   * `maypop.link.to(path)` instead. Resolves once the card is shown.
    *
-   * Rejects if `path` is invalid, or — commonly, while previewing an
-   * unpublished app — with code `"maypop/share-unavailable"` and the message
-   * "This app must be published to a group before you can share." That message
-   * is written for end users, so you can show it directly. Wrap the call in
-   * try/catch and surface it (a toast is ideal).
+   * Rejects with `maypop/invalid-path` for an invalid `path`, or with
+   * `maypop/share-unavailable` and a message written for end users when this
+   * surface can't share (show it directly — a toast is ideal).
    */
   share(opts: { path: string; title?: string }): Promise<void>;
   // #endregion capability:share

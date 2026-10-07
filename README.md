@@ -276,10 +276,13 @@ agent tools without invoking a real external integration:
 }
 ```
 
-`maypop.share()` opens a host-owned card containing a local deep link. Captured
-notifications with a `path` expose an **Open in local app** action in the
-outbox. These simulate the app-visible contract without claiming that a local
-link was published or that a captured notification was delivered.
+`maypop.link.to(path)` returns a local deep link and `maypop.share()` opens a
+host-owned card containing one. Captured notifications with a `path` expose an
+**Open in local app** action in the outbox. The local host opens these the way
+Maypop does — the app loads at its entry with the path in `location.hash` and
+`maypop.launchPath` — so an app that routes correctly here routes correctly
+once published. None of this claims that a local link was published or that a
+captured notification was delivered.
 
 The local bearer token is random for every server run, and a lock prevents two
 development servers from writing the same data directory. To use a different

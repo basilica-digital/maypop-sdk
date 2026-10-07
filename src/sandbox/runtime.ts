@@ -648,6 +648,14 @@ function sandboxHtml(
       const shareTitle = document.getElementById("share-title");
       const shareLink = document.getElementById("share-link");
       let port = null;
+      // The host's deep-link form, as on Maypop: the shell's root URL with the
+      // app path in \`?launchPath=\`, handed to the app as its location.hash.
+      const appUrl = location.origin + "/";
+      const appLink = (path) => {
+        const url = new URL(appUrl);
+        url.searchParams.set("launchPath", path);
+        return url.href;
+      };
 
       const theme = () => matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
       const postTheme = () => frame.contentWindow?.postMessage({ type: "maypop:theme", theme: theme() }, location.origin);
@@ -698,7 +706,7 @@ function sandboxHtml(
               });
               return;
             }
-            const link = new URL(path, location.origin).href;
+            const link = appLink(path);
             shareTitle.textContent = typeof event.data.title === "string" && event.data.title.trim()
               ? event.data.title.trim()
               : "Share local app";
@@ -730,6 +738,7 @@ function sandboxHtml(
             context: {
               appId: config.appId,
               apiBase: location.origin,
+              appUrl,
               kvPullIntervalMs: config.kvPullIntervalMs,
             },
             token: { token: current.token, expiresIn: current.expiresIn ?? 86400, scopes: current.scopes },
@@ -751,9 +760,14 @@ function sandboxHtml(
       document.getElementById("share-copy").addEventListener("click", async () => {
         await navigator.clipboard.writeText(shareLink.href);
       });
-      const appUrl = new URL(location.href);
-      appUrl.searchParams.set("${SANDBOX_APP_QUERY}", config.appRequestToken);
-      frame.src = appUrl.pathname + appUrl.search + appUrl.hash;
+      const frameUrl = new URL(location.href);
+      const launchPath = frameUrl.searchParams.get("launchPath");
+      if (launchPath?.startsWith("/") && !launchPath.startsWith("//")) {
+        frameUrl.searchParams.delete("launchPath");
+        frameUrl.hash = launchPath;
+      }
+      frameUrl.searchParams.set("${SANDBOX_APP_QUERY}", config.appRequestToken);
+      frame.src = frameUrl.pathname + frameUrl.search + frameUrl.hash;
     </script>
   </body>
 </html>`;

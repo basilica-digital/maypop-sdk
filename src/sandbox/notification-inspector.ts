@@ -67,7 +67,7 @@ export function notificationInspectorHtml(mode: DevelopmentMode): string {
           if (note.path) {
             const open = document.createElement("a");
             open.className = "open";
-            open.href = note.path;
+            open.href = "/?launchPath=" + encodeURIComponent(note.path);
             open.target = "_blank";
             open.rel = "noreferrer";
             open.textContent = "Open in local app";
