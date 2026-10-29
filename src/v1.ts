@@ -752,13 +752,11 @@ interface MaypopAiDecisionResponse {
  * ask" over a chat box that refuses. `models()` never raises that card: asking
  * what you could run is not running it.
  *
- * Every method here can also throw `maypop/ai-limit` when the user has
- * exhausted their daily AI allowance (the free plan includes a fixed number
- * of AI credits per day, resetting at midnight UTC) or their plan doesn't
- * cover the call.
- * Catch it and show a friendly "Daily AI limit reached — try again tomorrow
- * or upgrade your plan." state — never auto-retry, the limit won't reset for
- * hours.
+ * Every method here can also throw `maypop/ai-limit` when the viewer is out of
+ * AI credits (an app's AI is paid from the viewer's own account) or their
+ * plan doesn't cover the call. Maypop itself then shows the viewer a notice
+ * with the way to more credits, so the app only needs a calm "out of AI
+ * credits" state of its own. Never auto-retry: credits won't return for hours.
  */
 interface MaypopAi {
   /**
@@ -944,7 +942,7 @@ interface MaypopAi {
    *   img.src = res.data[0].url;
    * } catch (e) {
    *   if (e.code === "maypop/ai-blocked") showRetryUi(e.message);
-   *   else if (e.code === "maypop/ai-limit") showLimitUi(e.message); // out of daily AI credits — no retry button
+   *   else if (e.code === "maypop/ai-limit") showLimitUi(e.message); // out of AI credits — no retry button
    *   else throw e;
    * }
    *

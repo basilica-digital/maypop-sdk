@@ -56,8 +56,17 @@ globalThis.fetch = async (url, init) => {
 
 const { maypop } = await import("@basilica-digital/maypop-sdk");
 
+const toHost = [];
+
 function init(scopes) {
-  const port = { postMessage() {}, start() {}, close() {}, onmessage: null };
+  const port = {
+    postMessage(message) {
+      toHost.push(message);
+    },
+    start() {},
+    close() {},
+    onmessage: null,
+  };
   listeners.get("message")({
     data: {
       type: "maypop:init",
@@ -119,7 +128,10 @@ test("decide() posts the body verbatim to /app-api/ai/decisions with the session
   assert.equal("stream" in sent, false);
 });
 
-test("decide() maps a 402 to maypop/ai-limit and a backend 400 to maypop/error", async () => {
+// A 402 must also reach the host: the app's own error handling is untrusted
+// generated code, and the host's notice is the only reliable upgrade path.
+test("decide() maps a 402 to maypop/ai-limit, tells the host, and maps a backend 400 to maypop/error", async () => {
+  toHost.length = 0;
   respond = () =>
     new Response(JSON.stringify({ error: "daily allowance exhausted", code: "quota_exceeded" }), {
       status: 402,
@@ -129,6 +141,10 @@ test("decide() maps a 402 to maypop/ai-limit and a backend 400 to maypop/error",
     assert.equal(error.code, "maypop/ai-limit");
     return true;
   });
+  assert.deepEqual(
+    toHost.filter((m) => m.type === "maypop:ai-limit"),
+    [{ type: "maypop:ai-limit" }],
+  );
 
   respond = () =>
     new Response(JSON.stringify({ error: "`questions` must be a non-empty object" }), {

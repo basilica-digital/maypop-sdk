@@ -192,6 +192,14 @@
     port?.postMessage({ type: "maypop:sign-in" });
   };
 
+  // Tell the host the viewer is out of AI credits, so it can explain that an
+  // app's AI runs on the viewer's own account and offer the way to more. No
+  // payload, for the same reason as the sign-in card; the host decides how
+  // often to show it.
+  const reportAiLimit = () => {
+    port?.postMessage({ type: "maypop:ai-limit" });
+  };
+
   // The sign-in half of every capability refusal, shared by the guards below.
   //
   // An account-less guest's token carries only the reader scopes — the server
@@ -403,9 +411,10 @@
   // { error: "...", code? } — surface whichever message exists, and give the
   // two actionable failures their own codes so apps can react instead of
   // showing a generic error:
-  //   - 402 / "quota_exceeded" -> "maypop/ai-limit": the user is out of daily
-  //     AI credits (or their plan doesn't cover the call) — show an "out of
-  //     daily AI credits — try tomorrow or upgrade" state, never auto-retry.
+  //   - 402 / "quota_exceeded" -> "maypop/ai-limit": the user is out of AI
+  //     credits (or their plan doesn't cover the call). The host is told so it
+  //     can offer an upgrade; the app shows an "out of AI credits" state and
+  //     never auto-retries.
   //   - content moderation -> "maypop/ai-blocked": offer a "rephrase / try
   //     again" path.
   async function apiError(res, what, mapCodes) {
@@ -440,9 +449,10 @@
       );
     }
     if (res.status === 402 || code === "quota_exceeded") {
+      reportAiLimit();
       return err(
         "maypop/ai-limit",
-        "Daily AI limit reached — try again tomorrow or upgrade your plan.",
+        "Out of AI credits — more arrive tomorrow, or upgrade your plan.",
       );
     }
     const blocked =
