@@ -1895,7 +1895,7 @@
   // The app's gateway to the AI providers. Calls go through /app-api/ai using
   // server-side provider keys (never exposed to the app) and are gated by the
   // ai:use scope. Chat requests/responses are OpenAI-compatible shapes, except
-  // `model` is a named tier ("fast" | "smart") the server resolves to a
+  // `model` is a named tier ("lite" | "smart") the server resolves to a
   // provider model — the app never names a raw model. Decisions and image
   // generation take no model at all (the server pins one).
   const ai = {
@@ -1907,7 +1907,7 @@
     },
     /**
      * Run a chat completion and resolve with the full OpenAI-shaped response.
-     * `request` is { model: "fast" | "smart", messages, ...openai fields }.
+     * `request` is { model: "lite" | "smart", messages, ...openai fields }.
      * A message's `content` may be an array mixing text and image_url parts
      * for vision input (see MaypopAiMessage in v1.d.ts) — forwarded verbatim;
      * the backend inlines/resizes the images.

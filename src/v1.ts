@@ -348,16 +348,16 @@ interface MaypopAiMessage {
  */
 type MaypopAiModel =
   /**
-   * Small, fast, and inexpensive. Best for simple, high-volume, or
-   * latency-sensitive calls where a smaller model will plainly do: short
-   * rewrites, extracting a field, generating a name or title, quick
-   * suggestions. Reach for this first when the task is well-scoped. (For
-   * classifying or routing input, {@link MaypopAi.decide} is cheaper and
-   * needs no parsing.)
+   * Small and inexpensive: the lowest-cost tier. Best for simple or
+   * high-volume calls where a smaller model will plainly do: short rewrites,
+   * extracting a field, generating a name or title, quick suggestions. Reach
+   * for this first when the task is well-scoped. It is not always quicker
+   * than `"smart"`. (For classifying or routing input,
+   * {@link MaypopAi.decide} is cheaper and needs no parsing.)
    *
-   * e.g. an RPG app uses `"fast"` to suggest character names or a quest title.
+   * e.g. an RPG app uses `"lite"` to suggest character names or a quest title.
    */
-  | "fast"
+  | "lite"
   /**
    * Larger and more capable, at higher latency and cost. Use when the task
    * needs genuine reasoning, creativity, or long, coherent output — where
@@ -366,7 +366,9 @@ type MaypopAiModel =
    * e.g. an RPG app uses `"smart"` for the game master that narrates scenes and
    * runs the world.
    */
-  | "smart";
+  | "smart"
+  /** @deprecated Use `"lite"`. */
+  | "fast";
 
 /**
  * An OpenAI-compatible chat-completions request body. Forwarded almost
@@ -376,7 +378,7 @@ type MaypopAiModel =
  */
 interface MaypopAiRequest {
   /**
-   * Which model tier to run on — `"fast"` or `"smart"`. Required. See
+   * Which model tier to run on — `"lite"` or `"smart"`. Required. See
    * {@link MaypopAiModel} for how to choose. You can't request a raw provider
    * model; the tier is resolved to one server-side.
    */
@@ -761,7 +763,7 @@ interface MaypopAiDecisionResponse {
 interface MaypopAi {
   /**
    * The model tiers this app may call, each with guidance on when to use it:
-   * `{ data: [{ id: "fast", description }, { id: "smart", description }] }`. A
+   * `{ data: [{ id: "lite", description }, { id: "smart", description }] }`. A
    * fixed, named set (see {@link MaypopAiModel}) — handy for a tier picker.
    */
   models(): Promise<{ data: Array<{ id: MaypopAiModel; description: string }> }>;
@@ -797,7 +799,7 @@ interface MaypopAi {
    *
    * ```js
    * const res = await maypop.ai.chat({
-   *   model: "fast",
+   *   model: "lite",
    *   messages: [{ role: "user", content: "Suggest a tavern name." }],
    * });
    * console.log(res.choices[0].message.content);
@@ -851,7 +853,7 @@ interface MaypopAi {
    * pick-one, rate-on-a-scale) and {@link MaypopAiDecisionAnswer} for what
    * comes back.
    *
-   * PREFER THIS over `chat({ model: "fast" })` whenever the answer is one of a
+   * PREFER THIS over `chat({ model: "lite" })` whenever the answer is one of a
    * fixed set: classifying input, routing a message to a screen, gating a
    * destructive action, checking or ranking something a chat model wrote. It
    * answers in well under a second, costs a small fraction of a chat call,
@@ -1396,7 +1398,7 @@ interface MaypopAgent {
 }
 
 /** Which model tier the agent runs on — resolved to a concrete model server-side. */
-type MaypopAgentTier = "fast" | "smart";
+type MaypopAgentTier = MaypopAiModel;
 
 /** Summary of one stored conversation, from {@link MaypopAgentConversations.list}. */
 interface MaypopAgentConversationSummary {
