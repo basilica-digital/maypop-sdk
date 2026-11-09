@@ -35,7 +35,7 @@ import {
 // ----------------------------------------------------------------- public API
 
 /** Model tier — resolved to a concrete model server-side. */
-export type AgentTier = "lite" | "smart";
+export type AgentTier = "lite" | "smart" | "fast";
 
 /** Result an app tool may return — a bare string, or text plus structured
  *  details for the app's own UI/logging (not shown to the model). */
@@ -240,9 +240,11 @@ export interface AgentHost {
 
 // Per-tier cost metadata (USD per 1M tokens). Only used for pi's usage
 // accounting; mirrors the studio's proxy catalog.
+const LITE_COST = { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 };
 const TIER_COST: Record<AgentTier, Model<"openai-completions">["cost"]> = {
   smart: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-  lite: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+  lite: LITE_COST,
+  fast: LITE_COST,
 };
 
 /**
