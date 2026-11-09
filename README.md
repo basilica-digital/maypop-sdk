@@ -377,8 +377,27 @@ pnpm test
 pnpm pack
 ```
 
-Pushing the matching tag runs the npm publication workflow, publishing a release
-candidate under the `next` dist-tag. Promotion to `latest` happens separately
-after the corresponding production deployment. The first release
-must be published by an npm owner; after that, configure this repository as the
-package's trusted publisher for `.github/workflows/release.yml`.
+Pushing the matching tag runs the npm publication workflow, which publishes the
+plain `X.Y.Z` version under the `next` dist-tag and leaves `latest` unchanged.
+Installs using `@latest` stay on the promoted version, and existing exact pins
+stay fixed. This does not hide the version from SemVer range resolution:
+consumers using ranges such as `^1.6.0` can resolve a newly published version
+before promotion.
+Production dependencies must use exact version pins rather than ranges.
+
+The Maypop backend pins an exact SDK version, so it can deploy a version
+published under `next` before that version is promoted to `latest`. After a
+successful production deployment, the product's production deploy pipeline
+uses an npm token authorized to update the package's dist-tags to promote the
+deployed version:
+
+```sh
+npm dist-tag add @basilica-digital/maypop-sdk@X.Y.Z latest
+```
+
+Replace `X.Y.Z` with the exact SDK version deployed to production.
+
+Configure this repository as the package's trusted publisher for
+`.github/workflows/release.yml` to authenticate publication with OIDC. That
+workflow's OIDC identity does not authenticate the separate production deploy
+pipeline's dist-tag updates; promotion uses the pipeline's npm token.
