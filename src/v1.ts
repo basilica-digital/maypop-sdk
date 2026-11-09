@@ -366,14 +366,7 @@ type MaypopAiModel =
    * e.g. an RPG app uses `"smart"` for the game master that narrates scenes and
    * runs the world.
    */
-  | "smart"
-  /**
-   * Another name for `"lite"`, accepted so apps that already pass it keep
-   * working. Write `"lite"` in new code.
-   *
-   * @deprecated Use `"lite"`.
-   */
-  | "fast";
+  | "smart";
 
 /**
  * An OpenAI-compatible chat-completions request body. Forwarded almost

@@ -727,7 +727,7 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
       return;
     }
     if (request.url === "/app-api/ai/models") {
-      response.end(JSON.stringify({ data: [{ id: "fast", description: "Fast" }] }));
+      response.end(JSON.stringify({ data: [{ id: "lite", description: "Lite" }] }));
       return;
     }
     if (request.url === "/app-api/multiplayer/room-key?room=board") {
@@ -840,7 +840,7 @@ test("hybrid mode reads the selected profile and mints its own app session", asy
     const models = await fetch(`${sandbox.url}/app-api/ai/models`, {
       headers: authorization,
     }).then((response) => response.json());
-    assert.equal(models.data[0].id, "fast");
+    assert.equal(models.data[0].id, "lite");
     const room = await fetch(
       `${sandbox.url}/app-api/multiplayer/room-key?room=board`,
       { headers: authorization },
