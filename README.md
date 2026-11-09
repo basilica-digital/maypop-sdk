@@ -377,6 +377,8 @@ pnpm test
 pnpm pack
 ```
 
-Pushing the matching tag runs the npm publication workflow. The first release
+Pushing the matching tag runs the npm publication workflow, publishing a release
+candidate under the `next` dist-tag. Promotion to `latest` happens separately
+after the corresponding production deployment. The first release
 must be published by an npm owner; after that, configure this repository as the
 package's trusted publisher for `.github/workflows/release.yml`.

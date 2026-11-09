@@ -46,4 +46,4 @@ jobs:
             echo "published=false" >> "${GITHUB_OUTPUT}"
           fi
       - if: steps.registry.outputs.published != 'true'
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance --tag next
