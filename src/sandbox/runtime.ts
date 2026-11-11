@@ -628,7 +628,7 @@ function sandboxHtml(
       id="app"
       title="App"
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-popups-to-escape-sandbox allow-downloads"
-      allow="autoplay; clipboard-read; clipboard-write; encrypted-media; fullscreen; geolocation; microphone; camera; display-capture; accelerometer; gyroscope; magnetometer"
+      allow="autoplay; clipboard-write; encrypted-media; fullscreen; geolocation; microphone; camera; display-capture 'none'; clipboard-read 'none'; accelerometer 'none'; gyroscope 'none'; magnetometer 'none'"
     ></iframe>
     <a id="badge" href="/_maypop/notifications" target="_blank" rel="noreferrer">Maypop development</a>
     <dialog id="share-card">
