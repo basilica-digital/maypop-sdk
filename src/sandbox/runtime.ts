@@ -579,7 +579,7 @@ function validateCid(cid: string): void {
 // them (the same list as shell.html, which a test compares), and so does a
 // response header on every document the sandbox serves: the app shares the
 // host page's origin, so it can reach that page's window or open its own.
-const REFUSED_APP_FEATURES = [
+export const REFUSED_APP_FEATURES = [
   "display-capture",
   "clipboard-read",
   "accelerometer",

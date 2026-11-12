@@ -26,7 +26,14 @@ test("the Next.js binding composes rewrites around a private sandbox server", as
           return [
             {
               source: "/:path*",
-              headers: [{ key: "Permissions-Policy", value: "display-capture=*" }],
+              headers: [
+                { key: "X-Frame-Options", value: "SAMEORIGIN" },
+                {
+                  key: "permissions-policy",
+                  value:
+                    'camera=(), display-capture=*, microphone=(self "https://a.example/x,y")',
+                },
+              ],
             },
           ];
         },
@@ -50,19 +57,26 @@ test("the Next.js binding composes rewrites around a private sandbox server", as
     }
     // Guards: the documents Next serves itself (the app inside the host, or
     // one opened in a window of its own) going out without the policy the
-    // sandbox host sends, or with a project's looser one.
-    const headers = await config.headers();
-    assert.deepEqual(headers.at(-1), {
-      source: "/:path*",
-      headers: [
-        {
-          key: "Permissions-Policy",
-          value:
-            "display-capture=(), clipboard-read=(), accelerometer=(), gyroscope=(), magnetometer=()",
-        },
-      ],
-    });
-    assert.equal(headers.length, 2);
+    // sandbox host sends or with a project's looser one, and the project
+    // losing the restrictions it set on other features.
+    const refused =
+      "display-capture=(), clipboard-read=(), accelerometer=(), gyroscope=(), magnetometer=()";
+    assert.deepEqual(await config.headers(), [
+      {
+        source: "/:path*",
+        headers: [{ key: "Permissions-Policy", value: refused }],
+      },
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          {
+            key: "permissions-policy",
+            value: `camera=(), microphone=(self "https://a.example/x,y"), ${refused}`,
+          },
+        ],
+      },
+    ]);
     const rewrites = await config.rewrites();
     assert.equal(rewrites.afterFiles[0].source, "/legacy");
     assert.ok(

@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 
 import {
   APP_PERMISSIONS_POLICY,
+  REFUSED_APP_FEATURES,
   SANDBOX_APP_QUERY,
   createMaypopSandboxServer,
   type MaypopSandboxServer,
@@ -122,6 +123,40 @@ function mergeRewrites(
   };
 }
 
+// A `Permissions-Policy` value's directives: split at the commas outside
+// quoted origins and parenthesised allowlists.
+function policyDirectives(value: string): string[] {
+  const directives: string[] = [];
+  let depth = 0;
+  let quoted = false;
+  let start = 0;
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (character === '"') quoted = !quoted;
+    else if (quoted) continue;
+    else if (character === "(") depth++;
+    else if (character === ")") depth--;
+    else if (character === "," && depth === 0) {
+      directives.push(value.slice(start, index));
+      start = index + 1;
+    }
+  }
+  directives.push(value.slice(start));
+  return directives.map((directive) => directive.trim()).filter(Boolean);
+}
+
+// A project's policy with the features no app may use refused: its other
+// directives stay as written.
+function withAppPolicy(value: string): string {
+  const kept = policyDirectives(value).filter(
+    (directive) =>
+      !REFUSED_APP_FEATURES.includes(
+        (directive.split("=")[0] ?? "").trim().toLowerCase(),
+      ),
+  );
+  return [...kept, APP_PERMISSIONS_POLICY].join(", ");
+}
+
 function allowedDevOrigins(configured: string[] | undefined): string[] {
   const origins = new Set(configured);
 
@@ -158,16 +193,26 @@ export function withMaypop(
     allowedDevOrigins: allowedDevOrigins(config.allowedDevOrigins),
     // Next serves the app's own documents itself, past the sandbox server
     // and the header it sets, so the policy is added to Next's responses
-    // too. Listed last, where it wins over a project's own value.
+    // too. A later rule's value replaces an earlier one's for the same key,
+    // so the policy goes first for every path, and each project rule that
+    // sets its own keeps its directives with the refused features added.
     async headers() {
+      const existing = (await existingHeaders?.()) ?? [];
       return [
-        ...((await existingHeaders?.()) ?? []),
         {
           source: "/:path*",
           headers: [
             { key: "Permissions-Policy", value: APP_PERMISSIONS_POLICY },
           ],
         },
+        ...existing.map((rule) => ({
+          ...rule,
+          headers: rule.headers.map((header) =>
+            header.key.toLowerCase() === "permissions-policy"
+              ? { ...header, value: withAppPolicy(header.value) }
+              : header,
+          ),
+        })),
       ];
     },
     async rewrites() {
