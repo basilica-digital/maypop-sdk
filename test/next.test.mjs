@@ -22,6 +22,14 @@ test("the Next.js binding composes rewrites around a private sandbox server", as
       {
         allowedDevOrigins: ["preview.example.test"],
         output: "export",
+        async headers() {
+          return [
+            {
+              source: "/:path*",
+              headers: [{ key: "Permissions-Policy", value: "display-capture=*" }],
+            },
+          ];
+        },
         async rewrites() {
           return [{ source: "/legacy", destination: "/modern" }];
         },
@@ -40,6 +48,21 @@ test("the Next.js binding composes rewrites around a private sandbox server", as
         }
       }
     }
+    // Guards: the documents Next serves itself (the app inside the host, or
+    // one opened in a window of its own) going out without the policy the
+    // sandbox host sends, or with a project's looser one.
+    const headers = await config.headers();
+    assert.deepEqual(headers.at(-1), {
+      source: "/:path*",
+      headers: [
+        {
+          key: "Permissions-Policy",
+          value:
+            "display-capture=(), clipboard-read=(), accelerometer=(), gyroscope=(), magnetometer=()",
+        },
+      ],
+    });
+    assert.equal(headers.length, 2);
     const rewrites = await config.rewrites();
     assert.equal(rewrites.afterFiles[0].source, "/legacy");
     assert.ok(

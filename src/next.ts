@@ -2,6 +2,7 @@ import { hostname, networkInterfaces } from "node:os";
 import type { NextConfig } from "next";
 
 import {
+  APP_PERMISSIONS_POLICY,
   SANDBOX_APP_QUERY,
   createMaypopSandboxServer,
   type MaypopSandboxServer,
@@ -145,6 +146,7 @@ export function withMaypop(
   if (process.env.NODE_ENV !== "development") return config;
 
   const existingRewrites = config.rewrites;
+  const existingHeaders = config.headers;
   // Next.js rejects rewrites when static export is active, even though the
   // export setting only matters for production builds.
   const developmentConfig =
@@ -154,6 +156,20 @@ export function withMaypop(
   return {
     ...developmentConfig,
     allowedDevOrigins: allowedDevOrigins(config.allowedDevOrigins),
+    // Next serves the app's own documents itself, past the sandbox server
+    // and the header it sets, so the policy is added to Next's responses
+    // too. Listed last, where it wins over a project's own value.
+    async headers() {
+      return [
+        ...((await existingHeaders?.()) ?? []),
+        {
+          source: "/:path*",
+          headers: [
+            { key: "Permissions-Policy", value: APP_PERMISSIONS_POLICY },
+          ],
+        },
+      ];
+    },
     async rewrites() {
       const sandbox = await getNextSandbox(process.cwd(), options);
       const existing = (await existingRewrites?.()) as

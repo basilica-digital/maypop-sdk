@@ -596,7 +596,8 @@ const APP_FRAME_ALLOW = [
   "camera",
   ...REFUSED_APP_FEATURES.map((feature) => `${feature} 'none'`),
 ].join("; ");
-const APP_PERMISSIONS_POLICY = REFUSED_APP_FEATURES.map(
+/** The `Permissions-Policy` value for every document a development host serves. */
+export const APP_PERMISSIONS_POLICY = REFUSED_APP_FEATURES.map(
   (feature) => `${feature}=()`,
 ).join(", ");
 

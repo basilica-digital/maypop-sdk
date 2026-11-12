@@ -123,7 +123,11 @@ export default withMaypop({
 The framework's normal development command then serves its URL as a Maypop host
 with the application inside it, including when a routed application opens or
 refreshes a deep URL. The app uses the production SDK handshake, iframe
-permissions, and API shapes. Shared KV state persists to
+permissions, and API shapes. As in production, the app cannot capture the
+screen, read the clipboard, or read the accelerometer, gyroscope and
+magnetometer: the app frame refuses them, and the development host sends
+`Permissions-Policy` for them on every document it serves. Camera,
+microphone and location stay behind the browser's own prompt. Shared KV state persists to
 `.maypop/local/kv.json`, while Drive metadata and bytes persist under
 `.maypop/local/drive/`.
 
