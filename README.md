@@ -127,7 +127,12 @@ permissions, and API shapes. As in production, the app cannot capture the
 screen, read the clipboard, or read the accelerometer, gyroscope and
 magnetometer: the app frame refuses them, and the development host sends
 `Permissions-Policy` for them on every document it serves. Camera,
-microphone and location stay behind the browser's own prompt. Shared KV state persists to
+microphone and location stay behind the browser's own prompt.
+
+With the Next.js binding, that header replaces any `Permissions-Policy` the
+project sets in `headers()` while `next dev` runs, so a restriction of your
+own, such as `camera=()`, does not apply locally. Builds and production
+servers keep the project's configuration. Shared KV state persists to
 `.maypop/local/kv.json`, while Drive metadata and bytes persist under
 `.maypop/local/drive/`.
 
