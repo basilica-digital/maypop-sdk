@@ -100,6 +100,19 @@ test("the Vite plugin hosts and persists sandbox KV and Drive", async () => {
     const hostHtml = await host.text();
     assert.match(hostHtml, /Maypop sandbox/);
     assert.match(hostHtml, /sandbox="allow-scripts allow-same-origin/);
+    // Guards: the sandbox letting an app use what production refuses. Its
+    // frame carries the production shell's list, and the features that list
+    // refuses are refused for the whole document too.
+    const frameAllow = (html) => html.match(/\ballow="([^"]*)"/)?.[1];
+    const shellHtml = await readFile(join(process.cwd(), "shell.html"), "utf8");
+    assert.ok(frameAllow(shellHtml));
+    assert.equal(frameAllow(hostHtml), frameAllow(shellHtml));
+    assert.equal(
+      host.headers.get("permissions-policy"),
+      [...frameAllow(shellHtml).matchAll(/([a-z-]+) 'none'/g)]
+        .map((match) => `${match[1]}=()`)
+        .join(", "),
+    );
     const token = readSandboxConfigValue(hostHtml, "token");
     const appRequestToken = readSandboxConfigValue(hostHtml, "appRequestToken");
     const authorization = { Authorization: `Bearer ${token}` };

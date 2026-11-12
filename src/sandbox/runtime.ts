@@ -574,6 +574,32 @@ function validateCid(cid: string): void {
   if (!/^[0-9a-f-]{36}$/i.test(cid)) throw new HttpError(404, "file not found");
 }
 
+// What an app may not use, in the sandbox as in production: screen capture,
+// clipboard reading and the motion sensors. The app frame's `allow` refuses
+// them (the same list as shell.html, which a test compares), and so does a
+// response header on every document the sandbox serves: the app shares the
+// host page's origin, so it can reach that page's window or open its own.
+const REFUSED_APP_FEATURES = [
+  "display-capture",
+  "clipboard-read",
+  "accelerometer",
+  "gyroscope",
+  "magnetometer",
+];
+const APP_FRAME_ALLOW = [
+  "autoplay",
+  "clipboard-write",
+  "encrypted-media",
+  "fullscreen",
+  "geolocation",
+  "microphone",
+  "camera",
+  ...REFUSED_APP_FEATURES.map((feature) => `${feature} 'none'`),
+].join("; ");
+const APP_PERMISSIONS_POLICY = REFUSED_APP_FEATURES.map(
+  (feature) => `${feature}=()`,
+).join(", ");
+
 function sandboxHtml(
   identity: SandboxIdentity,
   token: string,
@@ -628,7 +654,7 @@ function sandboxHtml(
       id="app"
       title="App"
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-popups-to-escape-sandbox allow-downloads"
-      allow="autoplay; clipboard-write; encrypted-media; fullscreen; geolocation; microphone; camera; display-capture 'none'; clipboard-read 'none'; accelerometer 'none'; gyroscope 'none'; magnetometer 'none'"
+      allow="${APP_FRAME_ALLOW}"
     ></iframe>
     <a id="badge" href="/_maypop/notifications" target="_blank" rel="noreferrer">Maypop development</a>
     <dialog id="share-card">
@@ -1208,6 +1234,7 @@ export async function createMaypopSandboxRuntime(
     ): Promise<void> {
       const method = request.method ?? "GET";
       const url = new URL(request.url ?? "/", "http://maypop.local");
+      response.setHeader("Permissions-Policy", APP_PERMISSIONS_POLICY);
 
       if (method === "GET" && url.pathname === "/_maypop/notifications") {
         response.writeHead(200, {
