@@ -2,6 +2,7 @@ import { hostname, networkInterfaces } from "node:os";
 import type { NextConfig } from "next";
 
 import {
+  APP_PERMISSIONS_POLICY,
   SANDBOX_APP_QUERY,
   createMaypopSandboxServer,
   type MaypopSandboxServer,
@@ -121,6 +122,8 @@ function mergeRewrites(
   };
 }
 
+const PERMISSIONS_POLICY = "Permissions-Policy";
+
 function allowedDevOrigins(configured: string[] | undefined): string[] {
   const origins = new Set(configured);
 
@@ -145,6 +148,7 @@ export function withMaypop(
   if (process.env.NODE_ENV !== "development") return config;
 
   const existingRewrites = config.rewrites;
+  const existingHeaders = config.headers;
   // Next.js rejects rewrites when static export is active, even though the
   // export setting only matters for production builds.
   const developmentConfig =
@@ -154,6 +158,30 @@ export function withMaypop(
   return {
     ...developmentConfig,
     allowedDevOrigins: allowedDevOrigins(config.allowedDevOrigins),
+    // Next serves the app's own documents itself, past the sandbox server
+    // and the header it sets, so the policy is set on Next's responses too,
+    // in place of any the project configures. Next sends differently
+    // spelled names of one header in the order they first appeared, so a
+    // project's own policy headers are left out, however spelled, rather
+    // than relied on to lose to the rule below.
+    async headers() {
+      const existing = (await existingHeaders?.()) ?? [];
+      return [
+        ...existing
+          .map((rule) => ({
+            ...rule,
+            headers: rule.headers.filter(
+              (header) =>
+                header.key.toLowerCase() !== PERMISSIONS_POLICY.toLowerCase(),
+            ),
+          }))
+          .filter((rule) => rule.headers.length > 0),
+        {
+          source: "/:path*",
+          headers: [{ key: PERMISSIONS_POLICY, value: APP_PERMISSIONS_POLICY }],
+        },
+      ];
+    },
     async rewrites() {
       const sandbox = await getNextSandbox(process.cwd(), options);
       const existing = (await existingRewrites?.()) as

@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { promisify } from "node:util";
 
 import { withMaypop } from "@basilica-digital/maypop-sdk/next";
+
+const execFileAsync = promisify(execFile);
 
 function readSandboxConfigValue(html, name) {
   const match = html.match(new RegExp(`"${name}":"([^"]+)"`));
@@ -83,6 +87,69 @@ test("the Next.js binding composes rewrites around a private sandbox server", as
   } finally {
     if (previousNodeEnvironment === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previousNodeEnvironment;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// Guards: a document Next serves itself (the app inside the host, or one
+// opened in a window of its own) going out without the policy the sandbox
+// host sends, or with a project's own, however the project spells the header.
+test("Next serves its own documents with the app permissions policy", async () => {
+  // Inside the package, so the project resolves next and react.
+  const root = await mkdtemp(join(process.cwd(), ".next-test-"));
+
+  try {
+    await mkdir(join(root, "pages"));
+    await writeFile(
+      join(root, "pages/index.js"),
+      "export default function Page() { return null; }\n",
+    );
+    await writeFile(
+      join(root, "next.config.mjs"),
+      `import { withMaypop } from "@basilica-digital/maypop-sdk/next";
+export default withMaypop(
+  {
+    async headers() {
+      return [
+        {
+          source: "/:path*",
+          headers: [{ key: "Permissions-Policy", value: "camera=()" }],
+        },
+        {
+          source: "/:path*",
+          headers: [
+            { key: "permissions-policy", value: "display-capture=*" },
+            { key: "X-Project", value: "kept" },
+          ],
+        },
+      ];
+    },
+  },
+  { dataDirectory: ${JSON.stringify(join(root, ".maypop"))} },
+);
+`,
+    );
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        join(process.cwd(), "test/next-dev-headers.mjs"),
+        root,
+        "/?__maypop_app=1",
+        "/missing?__maypop_app=1",
+      ],
+      { env: { ...process.env, NODE_ENV: "development" }, timeout: 120_000 },
+    );
+    const results = JSON.parse(stdout.match(/^RESULTS (.*)$/m)[1]);
+    assert.equal(results.length, 2);
+    for (const { path, headers } of results) {
+      assert.equal(
+        headers["permissions-policy"],
+        "display-capture=(), clipboard-read=(), accelerometer=(), gyroscope=(), magnetometer=()",
+        path,
+      );
+      assert.equal(headers["x-project"], "kept", path);
+    }
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
