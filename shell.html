@@ -232,6 +232,9 @@
       #permission-deny:active {
         opacity: 0.7;
       }
+      #permission:focus {
+        outline: none;
+      }
       #permission #permission-question {
         font-size: 15px;
         font-weight: 600;
@@ -264,6 +267,7 @@
     <div
       id="permission"
       role="alertdialog"
+      tabindex="-1"
       aria-labelledby="permission-question"
       aria-describedby="permission-note"
       hidden

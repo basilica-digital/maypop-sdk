@@ -49,9 +49,16 @@ export function noShellPermissions<W>(): ShellPermissions<W> {
   return { decisions: {}, asking: [] };
 }
 
+/**
+ * `reset` is the app frame loading a new document: the documents that asked
+ * are gone, and a later document numbers its ids from the start again, so
+ * an answer still queued for the old one would answer the new one's
+ * question. Answers given so far stay.
+ */
 export type ShellPermissionEvent<W = unknown> =
   | { type: "request"; ask: ShellAsk<W> }
-  | { type: "answer"; allow: boolean };
+  | { type: "answer"; allow: boolean }
+  | { type: "reset" };
 
 /** The answer a request already has, or null when the person must be asked. */
 function settled<W>(state: ShellPermissions<W>, ask: ShellAsk<W>): boolean | null {
@@ -79,6 +86,9 @@ export function shellPermissionStep<W>(
       state: { ...state, asking: [...state.asking, event.ask] },
       replies: [],
     };
+  }
+  if (event.type === "reset") {
+    return { state: { decisions: state.decisions, asking: [] }, replies: [] };
   }
   const [answered, ...waiting] = state.asking;
   if (!answered) return { state, replies: [] };
@@ -111,6 +121,30 @@ export function shellPermissionQuestion(
   }
   if (camera && microphone) return `Let ${app} use your camera and microphone?`;
   return camera ? `Let ${app} use your camera?` : `Let ${app} use your microphone?`;
+}
+
+/** The window properties `shellFrameAsks` walks. */
+export interface ShellWindow {
+  parent: unknown;
+}
+
+/**
+ * Whether `source` is the app's frame (`app`) or a frame inside it, walking
+ * up through parents. The shell (`shell`), its other frames and windows the
+ * app opened or that opened the shell are refused.
+ */
+export function shellFrameAsks(
+  source: unknown,
+  app: unknown,
+  shell: unknown,
+): boolean {
+  let win = source as ShellWindow | null | undefined;
+  for (let depth = 0; win && depth < 32; depth++) {
+    if (win === app) return true;
+    if (win === shell || win.parent === win) return false;
+    win = win.parent as ShellWindow | null | undefined;
+  }
+  return false;
 }
 
 /**

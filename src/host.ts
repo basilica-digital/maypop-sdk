@@ -20,6 +20,7 @@ import {
   noShellPermissions,
   parseShellFeatures,
   shellAsksForApp,
+  shellFrameAsks,
   shellPermissionQuestion,
   shellPermissionStep,
 } from "./shell-permissions";
@@ -644,23 +645,11 @@ import {
     const denyBtn = document.getElementById("permission-deny");
     let state = noShellPermissions();
 
-    /** Whether `source` is the app's frame or a frame inside it. */
-    function fromApp(source) {
-      const app = frame?.contentWindow;
-      let win = source;
-      for (let depth = 0; win && depth < 32; depth++) {
-        if (win === app) return true;
-        if (win === window || win.parent === win) return false;
-        win = win.parent;
-      }
-      return false;
-    }
-
     function show() {
       const ask = state.asking[0];
       if (!card) return;
       if (!ask) {
-        card.hidden = true;
+        hide();
         return;
       }
       if (question) {
@@ -671,7 +660,15 @@ import {
       }
       const wasHidden = card.hidden;
       card.hidden = false;
-      if (wasHidden) allowBtn?.focus();
+      // The card, not Allow: a key meant for the app must not answer it.
+      if (wasHidden) card.focus();
+    }
+
+    function hide() {
+      if (!card || card.hidden) return;
+      const hadFocus = card.contains(document.activeElement);
+      card.hidden = true;
+      if (hadFocus) frame?.focus();
     }
 
     function dispatch(event) {
@@ -703,7 +700,7 @@ import {
       ) {
         return;
       }
-      if (!ev.source || !fromApp(ev.source)) return;
+      if (!shellFrameAsks(ev.source, frame?.contentWindow, window)) return;
       if (data.type === "maypop:permission-hello") {
         ev.source.postMessage({ type: "maypop:permission-host" }, "*");
         return;
@@ -718,6 +715,9 @@ import {
         },
       });
     });
+
+    // The frame's window stays the same object across documents.
+    frame?.addEventListener("load", () => dispatch({ type: "reset" }));
 
     allowBtn?.addEventListener("click", () =>
       dispatch({ type: "answer", allow: true }),

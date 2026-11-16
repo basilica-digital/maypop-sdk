@@ -5,6 +5,7 @@ import {
   noShellPermissions,
   parseShellFeatures,
   shellAsksForApp,
+  shellFrameAsks,
   shellPermissionStep,
 } from "../src/shell-permissions.ts";
 
@@ -81,4 +82,52 @@ test("an answer covers only the features it was asked for", () => {
     step.replies.map((r) => [r.id, r.granted]),
     [["p4", false]],
   );
+});
+
+// The app frame keeps one window object across documents and every document
+// numbers its ids from p1, so an answer queued for the old document must not
+// reach a request from the new one; answers already given stay.
+test("a new document in the app frame drops queued requests", () => {
+  const app = {};
+  let step = request(noShellPermissions(), app, "p1", ["camera"]);
+  step = shellPermissionStep(step.state, { type: "answer", allow: true });
+  step = request(step.state, app, "p2", ["geolocation"]);
+  assert.equal(step.state.asking.length, 1);
+
+  step = shellPermissionStep(step.state, { type: "reset" });
+  assert.deepEqual(step.replies, []);
+  assert.equal(step.state.asking.length, 0);
+
+  step = shellPermissionStep(step.state, { type: "answer", allow: true });
+  assert.deepEqual(step.replies, []);
+  step = request(step.state, app, "p1", ["camera"]);
+  assert.deepEqual(
+    step.replies.map((r) => r.granted),
+    [true],
+  );
+});
+
+// Only the app frame and frames inside it may open the card and receive
+// answers: the shell itself, its other frames, and popups or openers (top
+// windows) are refused.
+test("only the app frame and frames inside it are answered", () => {
+  const shell = {};
+  shell.parent = shell;
+  const app = { parent: shell };
+  const nested = { parent: app };
+  const deeper = { parent: nested };
+  const sibling = { parent: shell };
+  const popup = {};
+  popup.parent = popup;
+  const popupFrame = { parent: popup };
+
+  assert.equal(shellFrameAsks(app, app, shell), true);
+  assert.equal(shellFrameAsks(nested, app, shell), true);
+  assert.equal(shellFrameAsks(deeper, app, shell), true);
+  assert.equal(shellFrameAsks(shell, app, shell), false);
+  assert.equal(shellFrameAsks(sibling, app, shell), false);
+  assert.equal(shellFrameAsks(popup, app, shell), false);
+  assert.equal(shellFrameAsks(popupFrame, app, shell), false);
+  assert.equal(shellFrameAsks(null, app, shell), false);
+  assert.equal(shellFrameAsks(app, undefined, shell), false);
 });
