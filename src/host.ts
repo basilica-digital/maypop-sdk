@@ -17,12 +17,9 @@
  *   5. Soft install nudge
  */
 import {
-  noShellPermissions,
-  parseShellFeatures,
   shellAsksForApp,
-  shellFrameAsks,
   shellPermissionQuestion,
-  shellPermissionStep,
+  shellPermissionSession,
 } from "./shell-permissions";
 
 (() => {
@@ -643,12 +640,28 @@ import {
     const question = document.getElementById("permission-question");
     const allowBtn = document.getElementById("permission-allow");
     const denyBtn = document.getElementById("permission-deny");
-    let state = noShellPermissions();
+    const session = shellPermissionSession({
+      app: () => frame?.contentWindow,
+      shell: window,
+      reply(to, id, granted) {
+        try {
+          to.postMessage(
+            { type: "maypop:permission-result", id, granted },
+            "*",
+          );
+        } catch {
+          /* the asking frame is gone */
+        }
+      },
+    });
+    /** The request whose question the card shows. */
+    let onCard = null;
 
     function show() {
-      const ask = state.asking[0];
+      const ask = session.shown();
       if (!card) return;
       if (!ask) {
+        onCard = null;
         hide();
         return;
       }
@@ -658,10 +671,11 @@ import {
           ask.features,
         );
       }
-      const wasHidden = card.hidden;
       card.hidden = false;
-      // The card, not Allow: a key meant for the app must not answer it.
-      if (wasHidden) card.focus();
+      // The card, not Allow: a key meant for the app, or a second press on
+      // Allow, must not answer a question that just appeared.
+      if (ask !== onCard) card.focus();
+      onCard = ask;
     }
 
     function hide() {
@@ -669,26 +683,6 @@ import {
       const hadFocus = card.contains(document.activeElement);
       card.hidden = true;
       if (hadFocus) frame?.focus();
-    }
-
-    function dispatch(event) {
-      const step = shellPermissionStep(state, event);
-      state = step.state;
-      for (const reply of step.replies) {
-        try {
-          reply.from.postMessage(
-            {
-              type: "maypop:permission-result",
-              id: reply.id,
-              granted: reply.granted,
-            },
-            "*",
-          );
-        } catch {
-          /* the asking frame is gone */
-        }
-      }
-      show();
     }
 
     window.addEventListener("message", (ev) => {
@@ -700,31 +694,29 @@ import {
       ) {
         return;
       }
-      if (!shellFrameAsks(ev.source, frame?.contentWindow, window)) return;
+      if (!session.hosts(ev.source)) return;
       if (data.type === "maypop:permission-hello") {
         ev.source.postMessage({ type: "maypop:permission-host" }, "*");
         return;
       }
       if (typeof data.id !== "string") return;
-      dispatch({
-        type: "request",
-        ask: {
-          from: ev.source,
-          id: data.id,
-          features: parseShellFeatures(data.features),
-        },
-      });
+      session.request(ev.source, data.id, data.features);
+      show();
     });
 
-    // The frame's window stays the same object across documents.
-    frame?.addEventListener("load", () => dispatch({ type: "reset" }));
+    frame?.addEventListener("load", () => {
+      session.prune();
+      show();
+    });
 
-    allowBtn?.addEventListener("click", () =>
-      dispatch({ type: "answer", allow: true }),
-    );
-    denyBtn?.addEventListener("click", () =>
-      dispatch({ type: "answer", allow: false }),
-    );
+    allowBtn?.addEventListener("click", () => {
+      session.answer(onCard, true);
+      show();
+    });
+    denyBtn?.addEventListener("click", () => {
+      session.answer(onCard, false);
+      show();
+    });
   }
 
   // ── boot ────────────────────────────────────────────────────────────────

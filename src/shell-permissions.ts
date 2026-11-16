@@ -27,10 +27,14 @@ export function parseShellFeatures(value: unknown): ShellFeature[] {
 
 /**
  * One request. `from` is the window that asked, which gets the reply: frames
- * inside the app may reuse each other's ids.
+ * inside the app may reuse each other's ids. `document` is the document that
+ * window showed when the request arrived. A frame keeps its window across
+ * documents and each document numbers its ids from the start, so the reply
+ * belongs to that document only.
  */
 export interface ShellAsk<W = unknown> {
   from: W;
+  document: unknown;
   id: string;
   features: ShellFeature[];
 }
@@ -50,15 +54,13 @@ export function noShellPermissions<W>(): ShellPermissions<W> {
 }
 
 /**
- * `reset` is the app frame loading a new document: the documents that asked
- * are gone, and a later document numbers its ids from the start again, so
- * an answer still queued for the old one would answer the new one's
- * question. Answers given so far stay.
+ * `forget` drops the waiting requests `gone` picks, with no reply: the
+ * documents that made them are gone. Answers given so far stay.
  */
 export type ShellPermissionEvent<W = unknown> =
   | { type: "request"; ask: ShellAsk<W> }
   | { type: "answer"; allow: boolean }
-  | { type: "reset" };
+  | { type: "forget"; gone: (ask: ShellAsk<W>) => boolean };
 
 /** The answer a request already has, or null when the person must be asked. */
 function settled<W>(state: ShellPermissions<W>, ask: ShellAsk<W>): boolean | null {
@@ -87,8 +89,9 @@ export function shellPermissionStep<W>(
       replies: [],
     };
   }
-  if (event.type === "reset") {
-    return { state: { decisions: state.decisions, asking: [] }, replies: [] };
+  if (event.type === "forget") {
+    const asking = state.asking.filter((ask) => !event.gone(ask));
+    return { state: { decisions: state.decisions, asking }, replies: [] };
   }
   const [answered, ...waiting] = state.asking;
   if (!answered) return { state, replies: [] };
@@ -158,4 +161,102 @@ export function shellAsksForApp(win: {
   ReactNativeWebView?: unknown;
 }): boolean {
   return win.top === win && !win.ReactNativeWebView;
+}
+
+/** What the shell page gives `shellPermissionSession`. */
+export interface ShellPermissionPage<W> {
+  /** The app frame's window, if the frame exists. */
+  app(): W | null | undefined;
+  /** The shell's own window. */
+  shell: W;
+  /** Posts `maypop:permission-result` to `to`. */
+  reply(to: W, id: string, granted: boolean): void;
+}
+
+/**
+ * The document `win` shows, or null when the shell can't read it (a
+ * frame on another origin, or a sandbox without `allow-same-origin`).
+ */
+function documentOf(win: unknown): unknown {
+  try {
+    return (win as { document?: unknown } | null)?.document ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The shell's requests and answers for one tab. A request belongs to the
+ * window and the document that made it, and it is answered only while that
+ * window is still inside the app and still shows that document. Requests
+ * whose document is gone are dropped whenever the shell looks: on each
+ * request, on each answer, and when the app frame loads (`prune`). So an
+ * answer can never settle a later document's request with the same id, and
+ * a request made while a document is still loading is kept.
+ *
+ * The document is read when the message arrives. If a frame posted a request
+ * and loaded a new document before the shell handled it, the request counts
+ * as the new document's; only a per-document id from the asking side would
+ * tell those apart.
+ */
+export function shellPermissionSession<W>(page: ShellPermissionPage<W>) {
+  let state = noShellPermissions<W>();
+
+  function inApp(win: W): boolean {
+    return shellFrameAsks(win, page.app(), page.shell);
+  }
+
+  function live(ask: ShellAsk<W>): boolean {
+    return inApp(ask.from) && documentOf(ask.from) === ask.document;
+  }
+
+  function apply(event: ShellPermissionEvent<W>): void {
+    const step = shellPermissionStep(state, event);
+    state = step.state;
+    for (const reply of step.replies) {
+      if (live(reply)) page.reply(reply.from, reply.id, reply.granted);
+    }
+  }
+
+  function prune(): void {
+    apply({ type: "forget", gone: (ask) => !live(ask) });
+  }
+
+  return {
+    /**
+     * Whether the shell answers `win`: a window inside the app whose
+     * document the shell can read. Others get no `maypop:permission-host`.
+     */
+    hosts(win: W): boolean {
+      return inApp(win) && documentOf(win) !== null;
+    },
+
+    /** The request on the card, if any. */
+    shown(): ShellAsk<W> | null {
+      return state.asking[0] ?? null;
+    },
+
+    request(from: W, id: string, features: unknown): void {
+      const document = documentOf(from);
+      if (!inApp(from) || document === null) return;
+      prune();
+      apply({
+        type: "request",
+        ask: { from, document, id, features: parseShellFeatures(features) },
+      });
+    },
+
+    /**
+     * The person's answer to `ask`, the question they saw. When that request
+     * is gone the answer is dropped, so it can't land on the question that
+     * replaces it on the card.
+     */
+    answer(ask: ShellAsk<W> | null, allow: boolean): void {
+      prune();
+      if (!ask || state.asking[0] !== ask) return;
+      apply({ type: "answer", allow });
+    },
+
+    prune,
+  };
 }

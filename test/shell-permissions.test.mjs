@@ -6,6 +6,7 @@ import {
   parseShellFeatures,
   shellAsksForApp,
   shellFrameAsks,
+  shellPermissionSession,
   shellPermissionStep,
 } from "../src/shell-permissions.ts";
 
@@ -84,27 +85,108 @@ test("an answer covers only the features it was asked for", () => {
   );
 });
 
+// A tab's shell, its app frame and a frame inside the app, each showing a
+// document, plus a session that records the replies it posts.
+function tab() {
+  const shell = { name: "shell" };
+  shell.parent = shell;
+  const app = { name: "app", parent: shell, document: { url: "about:blank" } };
+  const nested = { name: "nested", parent: app, document: { url: "inner" } };
+  const sent = [];
+  const session = shellPermissionSession({
+    app: () => app,
+    shell,
+    reply: (to, id, granted) => sent.push([to.name, id, granted]),
+  });
+  return { shell, app, nested, sent, session };
+}
+
 // The app frame keeps one window object across documents and every document
-// numbers its ids from p1, so an answer queued for the old document must not
-// reach a request from the new one; answers already given stay.
-test("a new document in the app frame drops queued requests", () => {
-  const app = {};
-  let step = request(noShellPermissions(), app, "p1", ["camera"]);
-  step = shellPermissionStep(step.state, { type: "answer", allow: true });
-  step = request(step.state, app, "p2", ["geolocation"]);
-  assert.equal(step.state.asking.length, 1);
+// numbers its ids from p1. An Allow on the old document's camera question,
+// tapped after the new document asked for location with the same id but
+// before the frame's load event, must not settle the location request.
+test("an answer never reaches a later document in the same frame", () => {
+  const { app, sent, session } = tab();
+  app.document = { url: "first" };
+  session.request(app, "p1", ["camera"]);
+  const camera = session.shown();
 
-  step = shellPermissionStep(step.state, { type: "reset" });
-  assert.deepEqual(step.replies, []);
-  assert.equal(step.state.asking.length, 0);
+  app.document = { url: "second" };
+  session.request(app, "p1", ["geolocation"]);
+  assert.deepEqual(session.shown().features, ["geolocation"]);
 
-  step = shellPermissionStep(step.state, { type: "answer", allow: true });
-  assert.deepEqual(step.replies, []);
-  step = request(step.state, app, "p1", ["camera"]);
-  assert.deepEqual(
-    step.replies.map((r) => r.granted),
-    [true],
-  );
+  session.answer(camera, true);
+  assert.deepEqual(sent, []);
+  assert.deepEqual(session.shown().features, ["geolocation"]);
+
+  session.answer(session.shown(), false);
+  assert.deepEqual(sent, [["app", "p1", false]]);
+});
+
+// The same stale Allow with nothing queued behind it: it reaches no one, and
+// it is not kept as the tab's answer for the camera.
+test("an answer to a document that is gone is dropped", () => {
+  const { app, sent, session } = tab();
+  app.document = { url: "first" };
+  session.request(app, "p1", ["camera"]);
+  const camera = session.shown();
+
+  app.document = { url: "second" };
+  session.answer(camera, true);
+  assert.deepEqual(sent, []);
+  assert.equal(session.shown(), null);
+
+  session.request(app, "p1", ["camera"]);
+  assert.deepEqual(sent, []);
+  assert.deepEqual(session.shown().features, ["camera"]);
+});
+
+// The frame's load event comes after the document has run its scripts and
+// loaded its frames. A request the app or a frame inside it makes during
+// startup, on the first load or a later one, must survive that event.
+test("requests made before the app frame loads are kept", () => {
+  const { app, nested, sent, session } = tab();
+  app.document = { url: "app" };
+  session.request(app, "p1", ["camera"]);
+  session.request(nested, "p1", ["geolocation"]);
+  session.prune();
+  assert.deepEqual(session.shown().features, ["camera"]);
+
+  session.answer(session.shown(), true);
+  session.answer(session.shown(), true);
+  assert.deepEqual(sent, [
+    ["app", "p1", true],
+    ["nested", "p1", true],
+  ]);
+
+  app.document = { url: "app again" };
+  session.request(app, "p1", ["microphone"]);
+  session.prune();
+  session.answer(session.shown(), false);
+  assert.deepEqual(sent.at(-1), ["app", "p1", false]);
+});
+
+// A frame removed from the app (its parent becomes null) and a frame whose
+// document the shell can't read get no answer: the shell can't tell that
+// frame's documents apart.
+test("frames that left the app or can't be read are not answered", () => {
+  const { app, nested, sent, session } = tab();
+  session.request(nested, "p1", ["camera"]);
+  nested.parent = null;
+  session.answer(session.shown(), true);
+  assert.deepEqual(sent, []);
+  assert.equal(session.shown(), null);
+
+  const foreign = { name: "foreign", parent: app };
+  Object.defineProperty(foreign, "document", {
+    get() {
+      throw new Error("SecurityError");
+    },
+  });
+  assert.equal(session.hosts(foreign), false);
+  session.request(foreign, "p1", ["camera"]);
+  assert.equal(session.shown(), null);
+  assert.equal(session.hosts(app), true);
 });
 
 // Only the app frame and frames inside it may open the card and receive
