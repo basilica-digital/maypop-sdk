@@ -93,7 +93,6 @@ await esbuild.build({
     "activity-tracker": join(here, "src/activity-tracker.ts"),
     "ambient-palette": join(here, "src/ambient-palette.ts"),
     "app-cache-sw": join(here, "src/app-cache-sw.ts"),
-    host: join(here, "src/host.ts"),
   },
   bundle: true,
   format: "esm",
@@ -103,6 +102,19 @@ await esbuild.build({
   legalComments: "none",
   outdir: outDir,
   plugins: [stubPlugin],
+});
+
+// The shell loads host.js as a classic script; an IIFE keeps its modules out
+// of the shell page's global scope.
+await esbuild.build({
+  entryPoints: { host: join(here, "src/host.ts") },
+  bundle: true,
+  format: "iife",
+  platform: "browser",
+  target: ["es2022"],
+  minify: true,
+  legalComments: "none",
+  outdir: outDir,
 });
 
 // The capability chunks are served by the Maypop host at runtime. Framework

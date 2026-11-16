@@ -16,6 +16,14 @@
  *   4. Poll `/_maypop/revision` for app content updates
  *   5. Soft install nudge
  */
+import {
+  noShellPermissions,
+  parseShellFeatures,
+  shellAsksForApp,
+  shellPermissionQuestion,
+  shellPermissionStep,
+} from "./shell-permissions";
+
 (() => {
   const cfg = window.__MAYPOP_SHELL__;
   if (!cfg || !cfg.apiBase) {
@@ -621,6 +629,102 @@
       .addEventListener("change", layoutAppFrame);
   } catch {
     /* older browsers */
+  }
+
+  // ── camera, microphone and location ─────────────────────────────────────
+  // As a tab's top window the shell is the page that asks before the app
+  // reaches the browser's prompt (`shell-permissions.ts`).
+
+  if (shellAsksForApp(window)) answerPermissionRequests();
+
+  function answerPermissionRequests() {
+    const card = document.getElementById("permission");
+    const question = document.getElementById("permission-question");
+    const allowBtn = document.getElementById("permission-allow");
+    const denyBtn = document.getElementById("permission-deny");
+    let state = noShellPermissions();
+
+    /** Whether `source` is the app's frame or a frame inside it. */
+    function fromApp(source) {
+      const app = frame?.contentWindow;
+      let win = source;
+      for (let depth = 0; win && depth < 32; depth++) {
+        if (win === app) return true;
+        if (win === window || win.parent === win) return false;
+        win = win.parent;
+      }
+      return false;
+    }
+
+    function show() {
+      const ask = state.asking[0];
+      if (!card) return;
+      if (!ask) {
+        card.hidden = true;
+        return;
+      }
+      if (question) {
+        question.textContent = shellPermissionQuestion(
+          document.title || "this app",
+          ask.features,
+        );
+      }
+      const wasHidden = card.hidden;
+      card.hidden = false;
+      if (wasHidden) allowBtn?.focus();
+    }
+
+    function dispatch(event) {
+      const step = shellPermissionStep(state, event);
+      state = step.state;
+      for (const reply of step.replies) {
+        try {
+          reply.from.postMessage(
+            {
+              type: "maypop:permission-result",
+              id: reply.id,
+              granted: reply.granted,
+            },
+            "*",
+          );
+        } catch {
+          /* the asking frame is gone */
+        }
+      }
+      show();
+    }
+
+    window.addEventListener("message", (ev) => {
+      const data = ev.data;
+      if (!data || typeof data !== "object") return;
+      if (
+        data.type !== "maypop:permission-hello" &&
+        data.type !== "maypop:permission-request"
+      ) {
+        return;
+      }
+      if (!ev.source || !fromApp(ev.source)) return;
+      if (data.type === "maypop:permission-hello") {
+        ev.source.postMessage({ type: "maypop:permission-host" }, "*");
+        return;
+      }
+      if (typeof data.id !== "string") return;
+      dispatch({
+        type: "request",
+        ask: {
+          from: ev.source,
+          id: data.id,
+          features: parseShellFeatures(data.features),
+        },
+      });
+    });
+
+    allowBtn?.addEventListener("click", () =>
+      dispatch({ type: "answer", allow: true }),
+    );
+    denyBtn?.addEventListener("click", () =>
+      dispatch({ type: "answer", allow: false }),
+    );
   }
 
   // ── boot ────────────────────────────────────────────────────────────────
