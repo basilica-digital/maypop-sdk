@@ -45,7 +45,7 @@ test("requests wait for the card and are answered back to their frame", () => {
   assert.deepEqual(step.replies, []);
   assert.equal(step.state.asking.length, 2);
 
-  step = shellPermissionStep(step.state, { type: "answer", allow: false });
+  step = shellPermissionStep(step.state, { type: "answer", choice: "block" });
   assert.deepEqual(
     step.replies.map((r) => [r.from, r.id, r.granted]),
     [
@@ -68,7 +68,7 @@ test("requests wait for the card and are answered back to their frame", () => {
 test("an answer covers only the features it was asked for", () => {
   const app = {};
   let step = request(noShellPermissions(), app, "p1", ["camera"]);
-  step = shellPermissionStep(step.state, { type: "answer", allow: true });
+  step = shellPermissionStep(step.state, { type: "answer", choice: "allow" });
   assert.equal(step.replies[0].granted, true);
 
   step = request(step.state, app, "p2", ["camera"]);
@@ -83,6 +83,30 @@ test("an answer covers only the features it was asked for", () => {
     step.replies.map((r) => [r.id, r.granted]),
     [["p4", false]],
   );
+});
+
+// Allow this time grants the request on the card and nothing more: the
+// next request for the same feature shows the card again, and a request
+// already waiting behind it is still asked rather than granted with it.
+test("allow this time answers only the request on the card", () => {
+  const app = {};
+  let step = request(noShellPermissions(), app, "p1", ["camera"]);
+  step = request(step.state, app, "p2", ["camera"]);
+  step = shellPermissionStep(step.state, { type: "answer", choice: "once" });
+  assert.deepEqual(
+    step.replies.map((r) => [r.id, r.granted]),
+    [["p1", true]],
+  );
+  assert.deepEqual(
+    step.state.asking.map((a) => a.id),
+    ["p2"],
+  );
+  assert.deepEqual(step.state.decisions, {});
+
+  step = shellPermissionStep(step.state, { type: "answer", choice: "once" });
+  step = request(step.state, app, "p3", ["camera"]);
+  assert.deepEqual(step.replies, []);
+  assert.equal(step.state.asking.length, 1);
 });
 
 // A tab's shell, its app frame and a frame inside the app, each showing a
@@ -115,11 +139,11 @@ test("an answer never reaches a later document in the same frame", () => {
   session.request(app, "p1", ["geolocation"]);
   assert.deepEqual(session.shown().features, ["geolocation"]);
 
-  session.answer(camera, true);
+  session.answer(camera, "allow");
   assert.deepEqual(sent, []);
   assert.deepEqual(session.shown().features, ["geolocation"]);
 
-  session.answer(session.shown(), false);
+  session.answer(session.shown(), "block");
   assert.deepEqual(sent, [["app", "p1", false]]);
 });
 
@@ -132,7 +156,7 @@ test("an answer to a document that is gone is dropped", () => {
   const camera = session.shown();
 
   app.document = { url: "second" };
-  session.answer(camera, true);
+  session.answer(camera, "allow");
   assert.deepEqual(sent, []);
   assert.equal(session.shown(), null);
 
@@ -152,8 +176,8 @@ test("requests made before the app frame loads are kept", () => {
   session.prune();
   assert.deepEqual(session.shown().features, ["camera"]);
 
-  session.answer(session.shown(), true);
-  session.answer(session.shown(), true);
+  session.answer(session.shown(), "allow");
+  session.answer(session.shown(), "allow");
   assert.deepEqual(sent, [
     ["app", "p1", true],
     ["nested", "p1", true],
@@ -162,7 +186,7 @@ test("requests made before the app frame loads are kept", () => {
   app.document = { url: "app again" };
   session.request(app, "p1", ["microphone"]);
   session.prune();
-  session.answer(session.shown(), false);
+  session.answer(session.shown(), "block");
   assert.deepEqual(sent.at(-1), ["app", "p1", false]);
 });
 
@@ -173,7 +197,7 @@ test("frames that left the app or can't be read are not answered", () => {
   const { app, nested, sent, session } = tab();
   session.request(nested, "p1", ["camera"]);
   nested.parent = null;
-  session.answer(session.shown(), true);
+  session.answer(session.shown(), "allow");
   assert.deepEqual(sent, []);
   assert.equal(session.shown(), null);
 

@@ -113,6 +113,8 @@
         position: fixed;
         inset: 0;
         display: flex;
+        flex-direction: column;
+        gap: 16px;
         align-items: center;
         justify-content: center;
         padding: 24px;
@@ -123,6 +125,20 @@
         color: var(--shell-status);
         pointer-events: none;
         z-index: 1;
+      }
+      /* "Open this app in Maypop": the install card's solid button. */
+      #status a {
+        pointer-events: auto;
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-size: 13px;
+        font-weight: 600;
+        text-decoration: none;
+        background: var(--install-btn-bg);
+        color: var(--install-btn-fg);
+      }
+      #status a:active {
+        transform: scale(0.98);
       }
       #status[hidden] {
         display: none !important;
@@ -176,8 +192,21 @@
       #update {
         z-index: 3;
       }
+      /* Sized and placed like Maypop's own card over an app: compact,
+         centred near the top, never the width of a desktop window. */
       #permission {
         z-index: 4;
+        top: calc(16px + var(--sat));
+        bottom: auto;
+        left: 0;
+        right: 0;
+        width: min(
+          448px,
+          calc(100% - 32px - var(--sal) - var(--sar))
+        );
+        margin-inline: auto;
+        gap: 4px;
+        padding: 16px;
       }
       #install[hidden],
       #update[hidden],
@@ -197,6 +226,19 @@
       #permission .row {
         display: flex;
         gap: 8px;
+      }
+      /* One full-width button per choice, the same size at every width, so
+         none of the three reads as the lesser option. */
+      #permission .row {
+        flex-direction: column;
+        margin-top: 12px;
+      }
+      #permission .row button {
+        flex: none;
+        width: 100%;
+        min-height: 44px;
+        font-family: inherit;
+        font-size: 15px;
       }
       #install button,
       #update button,
@@ -222,15 +264,27 @@
         transform: scale(0.98);
       }
       #install-dismiss,
-      #update-dismiss,
-      #permission-deny {
+      #update-dismiss {
         background: transparent;
         color: var(--install-dismiss);
       }
       #install-dismiss:active,
-      #update-dismiss:active,
-      #permission-deny:active {
+      #update-dismiss:active {
         opacity: 0.7;
+      }
+      #permission-once,
+      #permission-deny {
+        background: transparent;
+        color: var(--shell-fg);
+        box-shadow: inset 0 0 0 1px var(--install-border);
+      }
+      #permission-once:active,
+      #permission-deny:active {
+        transform: scale(0.98);
+      }
+      #permission button:focus-visible {
+        outline: 2px solid var(--shell-fg);
+        outline-offset: 2px;
       }
       #permission:focus {
         outline: none;
@@ -274,10 +328,12 @@
     >
       <p id="permission-question"></p>
       <p id="permission-note">
-        Your answer lasts until you close this tab. Your browser may ask too.
+        Allow and Don’t allow last until you close this tab. Allow this time
+        asks again next time. Your browser may ask too.
       </p>
       <div class="row">
         <button type="button" id="permission-allow">Allow</button>
+        <button type="button" id="permission-once">Allow this time</button>
         <button type="button" id="permission-deny">Don't allow</button>
       </div>
     </div>
@@ -296,6 +352,10 @@
         apiBase: "{{API_BASE}}",
         // Subdomain hosts: ""; path mounts (Tailscale): "/__app/{label}".
         mount: "{{APP_MOUNT}}",
+        // Maypop's web origin and this app's id, for the link to the app's
+        // page when the shell has no session. Left unfilled, no link shows.
+        maypopOrigin: "{{MAYPOP_ORIGIN}}",
+        appId: "{{APP_ID}}",
       };
     </script>
     <script src="{{APP_MOUNT}}/_maypop/host.js"></script>

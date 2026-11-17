@@ -21,6 +21,7 @@ import {
   shellPermissionQuestion,
   shellPermissionSession,
 } from "./shell-permissions";
+import { maypopAppUrl, shellSignedOut } from "./shell-signed-out";
 
 (() => {
   const cfg = window.__MAYPOP_SHELL__;
@@ -62,6 +63,26 @@ import {
     // Empty text still paints an inset:0 overlay (z-index above the iframe);
     // hide the node so "Opening…" can't stick over a loaded app forever.
     statusEl.hidden = !text;
+  }
+
+  /**
+   * No session to open the app with. On the web this links to the app's
+   * page in Maypop, the place that runs it (`shell-signed-out.ts`).
+   */
+  function showSignedOut(expired) {
+    if (!statusEl) return;
+    const view = shellSignedOut({
+      native: !!window.ReactNativeWebView,
+      expired,
+      appUrl: maypopAppUrl(cfg.maypopOrigin, cfg.appId),
+    });
+    setStatus(view.message);
+    if (!view.open) return;
+    const link = document.createElement("a");
+    link.href = view.open.href;
+    link.target = "_top";
+    link.textContent = view.open.label;
+    statusEl.append(link);
   }
 
   function deviceLabel() {
@@ -373,7 +394,7 @@ import {
         /* closed */
       }
       liveSession = null;
-      setStatus("Session expired. Scan the code again from your computer.");
+      showSignedOut(true);
     }
   }
 
@@ -638,8 +659,11 @@ import {
   function answerPermissionRequests() {
     const card = document.getElementById("permission");
     const question = document.getElementById("permission-question");
-    const allowBtn = document.getElementById("permission-allow");
-    const denyBtn = document.getElementById("permission-deny");
+    const choices = {
+      allow: document.getElementById("permission-allow"),
+      once: document.getElementById("permission-once"),
+      block: document.getElementById("permission-deny"),
+    };
     const session = shellPermissionSession({
       app: () => frame?.contentWindow,
       shell: window,
@@ -709,14 +733,12 @@ import {
       show();
     });
 
-    allowBtn?.addEventListener("click", () => {
-      session.answer(onCard, true);
-      show();
-    });
-    denyBtn?.addEventListener("click", () => {
-      session.answer(onCard, false);
-      show();
-    });
+    for (const [choice, button] of Object.entries(choices)) {
+      button?.addEventListener("click", () => {
+        session.answer(onCard, choice);
+        show();
+      });
+    }
   }
 
   // ── boot ────────────────────────────────────────────────────────────────
@@ -756,7 +778,7 @@ import {
         liveSession = session;
         if (session.appName) document.title = session.appName;
       } else if (result.kind === "revoked") {
-        setStatus("Session expired. Scan the code again from your computer.");
+        showSignedOut(false);
         return;
       } else {
         // No cookie yet vs network blip.

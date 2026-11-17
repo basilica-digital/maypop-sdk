@@ -5,13 +5,16 @@
  * asks with `maypop:permission-request` and waits for
  * `maypop:permission-result`; the shell shows its card and replies.
  *
- * Answers last while the tab is open and are never stored: the app shares
- * the shell's origin, so anything the shell could save the app could write
- * too. The card is the question the person answers before the browser's
+ * Allow and Don't allow last while the tab is open; Allow this time answers
+ * only the request on the card. Nothing is stored: the app shares the
+ * shell's origin, so anything the shell could save the app could write too. The card is the question the person answers before the browser's
  * own prompt, not a lock: an app that skips it reaches the browser directly.
  */
 
 export type ShellFeature = "camera" | "microphone" | "geolocation";
+
+/** The person's answer on the card: the tab's answer, or this request only. */
+export type ShellChoice = "allow" | "once" | "block";
 
 const SHELL_FEATURES: readonly ShellFeature[] = [
   "camera",
@@ -59,7 +62,7 @@ export function noShellPermissions<W>(): ShellPermissions<W> {
  */
 export type ShellPermissionEvent<W = unknown> =
   | { type: "request"; ask: ShellAsk<W> }
-  | { type: "answer"; allow: boolean }
+  | { type: "answer"; choice: ShellChoice }
   | { type: "forget"; gone: (ask: ShellAsk<W>) => boolean };
 
 /** The answer a request already has, or null when the person must be asked. */
@@ -96,11 +99,12 @@ export function shellPermissionStep<W>(
   const [answered, ...waiting] = state.asking;
   if (!answered) return { state, replies: [] };
   const decisions = { ...state.decisions };
-  for (const feature of answered.features) {
-    decisions[feature] = event.allow ? "allow" : "block";
+  if (event.choice !== "once") {
+    for (const feature of answered.features) decisions[feature] = event.choice;
   }
   const next: ShellPermissions<W> = { decisions, asking: [] };
-  const replies: ShellReply<W>[] = [{ ...answered, granted: event.allow }];
+  const granted = event.choice !== "block";
+  const replies: ShellReply<W>[] = [{ ...answered, granted }];
   const asking: ShellAsk<W>[] = [];
   for (const ask of waiting) {
     const granted = settled(next, ask);
@@ -251,10 +255,10 @@ export function shellPermissionSession<W>(page: ShellPermissionPage<W>) {
      * is gone the answer is dropped, so it can't land on the question that
      * replaces it on the card.
      */
-    answer(ask: ShellAsk<W> | null, allow: boolean): void {
+    answer(ask: ShellAsk<W> | null, choice: ShellChoice): void {
       prune();
       if (!ask || state.asking[0] !== ask) return;
-      apply({ type: "answer", allow });
+      apply({ type: "answer", choice });
     },
 
     prune,
