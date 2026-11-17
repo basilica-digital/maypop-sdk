@@ -16,6 +16,12 @@
  *   4. Poll `/_maypop/revision` for app content updates
  *   5. Soft install nudge
  */
+import {
+  shellAsksForApp,
+  shellPermissionQuestion,
+  shellPermissionSession,
+} from "./shell-permissions";
+
 (() => {
   const cfg = window.__MAYPOP_SHELL__;
   if (!cfg || !cfg.apiBase) {
@@ -621,6 +627,96 @@
       .addEventListener("change", layoutAppFrame);
   } catch {
     /* older browsers */
+  }
+
+  // ── camera, microphone and location ─────────────────────────────────────
+  // As a tab's top window the shell is the page that asks before the app
+  // reaches the browser's prompt (`shell-permissions.ts`).
+
+  if (shellAsksForApp(window)) answerPermissionRequests();
+
+  function answerPermissionRequests() {
+    const card = document.getElementById("permission");
+    const question = document.getElementById("permission-question");
+    const allowBtn = document.getElementById("permission-allow");
+    const denyBtn = document.getElementById("permission-deny");
+    const session = shellPermissionSession({
+      app: () => frame?.contentWindow,
+      shell: window,
+      reply(to, id, granted) {
+        try {
+          to.postMessage(
+            { type: "maypop:permission-result", id, granted },
+            "*",
+          );
+        } catch {
+          /* the asking frame is gone */
+        }
+      },
+    });
+    /** The request whose question the card shows. */
+    let onCard = null;
+
+    function show() {
+      const ask = session.shown();
+      if (!card) return;
+      if (!ask) {
+        onCard = null;
+        hide();
+        return;
+      }
+      if (question) {
+        question.textContent = shellPermissionQuestion(
+          document.title || "this app",
+          ask.features,
+        );
+      }
+      card.hidden = false;
+      // The card, not Allow: a key meant for the app, or a second press on
+      // Allow, must not answer a question that just appeared.
+      if (ask !== onCard) card.focus();
+      onCard = ask;
+    }
+
+    function hide() {
+      if (!card || card.hidden) return;
+      const hadFocus = card.contains(document.activeElement);
+      card.hidden = true;
+      if (hadFocus) frame?.focus();
+    }
+
+    window.addEventListener("message", (ev) => {
+      const data = ev.data;
+      if (!data || typeof data !== "object") return;
+      if (
+        data.type !== "maypop:permission-hello" &&
+        data.type !== "maypop:permission-request"
+      ) {
+        return;
+      }
+      if (!session.hosts(ev.source)) return;
+      if (data.type === "maypop:permission-hello") {
+        ev.source.postMessage({ type: "maypop:permission-host" }, "*");
+        return;
+      }
+      if (typeof data.id !== "string") return;
+      session.request(ev.source, data.id, data.features);
+      show();
+    });
+
+    frame?.addEventListener("load", () => {
+      session.prune();
+      show();
+    });
+
+    allowBtn?.addEventListener("click", () => {
+      session.answer(onCard, true);
+      show();
+    });
+    denyBtn?.addEventListener("click", () => {
+      session.answer(onCard, false);
+      show();
+    });
   }
 
   // ── boot ────────────────────────────────────────────────────────────────
