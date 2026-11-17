@@ -87,7 +87,7 @@ that support it, a service-kind `need`;
 `unavailable` entries contain a `need` (a toolkit or server host) and a
 `reason`. Discovery results do not include connection credentials or owner
 account details. The existing `maypop.mcp.servers()` continues to list
-connected servers; current hosts return a service-kind name, an empty URL,
+connected servers; updated hosts return a service-kind name, an empty URL,
 and a null account for each. Older hosts may still send connection details
 in the underlying response even though `discover()` filters them out.
 
