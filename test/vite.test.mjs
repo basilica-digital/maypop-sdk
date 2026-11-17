@@ -513,7 +513,8 @@ test("sandbox viewer fixtures exercise read-only, audience, and sign-in transiti
   }
 });
 
-test("sandbox MCP fixtures support discovery and deterministic tool calls", async () => {
+// Fixture account labels and URL credentials must never reach app discovery.
+test("sandbox MCP fixtures support private discovery and deterministic tool calls", async () => {
   const root = await mkdtemp(join(tmpdir(), "maypop-mcp-fixture-test-"));
   const dataDirectory = join(root, ".maypop");
   await mkdir(join(dataDirectory, "local"), { recursive: true });
@@ -524,9 +525,10 @@ test("sandbox MCP fixtures support discovery and deterministic tool calls", asyn
       servers: [
         {
           id: "search",
-          name: "Fixture search",
-          url: "mock://search",
+          name: "owner@example.com",
+          url: "mock://search/private?token=secret",
           account: "developer@example.com",
+          secret: "hidden",
           tools: [
             {
               name: "lookup",
@@ -542,6 +544,7 @@ test("sandbox MCP fixtures support discovery and deterministic tool calls", asyn
             },
           ],
         },
+        { id: "catalog", name: "private", url: "mock://private", account: "private", toolkitSlug: "search", tools: [] },
       ],
     }),
   );
@@ -564,7 +567,13 @@ test("sandbox MCP fixtures support discovery and deterministic tool calls", asyn
     const servers = await fetch(`${sandbox.url}/app-api/mcp/servers`, {
       headers,
     }).then((response) => response.json());
-    assert.equal(servers.servers[0].name, "Fixture search");
+    assert.deepEqual(servers, {
+      servers: [
+        { id: "search", name: "search", url: "", account: null, need: { host: "search" } },
+        { id: "catalog", name: "search", url: "", account: null, need: { toolkit: "search", name: "search", logoUrl: null } },
+      ],
+      unavailable: [],
+    });
     const tools = await fetch(`${sandbox.url}/app-api/mcp/tools/list`, {
       method: "POST",
       headers,

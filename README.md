@@ -79,6 +79,42 @@ import { MaypopProvider } from "@basilica-digital/maypop-sdk/react";
 </MaypopProvider>
 ```
 
+## Integration availability
+
+Use `maypop.mcp.discover()` to find connected integrations and service kinds
+that need attention. Its `available` entries contain an `id` and, on hosts
+that support it, a service-kind `need`;
+`unavailable` entries contain a `need` (a toolkit or server host) and a
+`reason`. Discovery results do not include connection credentials or owner
+account details. The existing `maypop.mcp.servers()` continues to list
+connected servers; updated hosts return a service-kind name, an empty URL,
+and a null account for each. Older hosts may still send connection details
+in the underlying response even though `discover()` filters them out.
+
+```ts
+import { isIntegrationUnavailableError, maypop } from "@basilica-digital/maypop-sdk";
+
+await maypop.ready();
+const { available, unavailable } = await maypop.mcp.discover();
+if (unavailable.length) {
+  // Ask an app admin to reconnect the integration or link a replacement.
+}
+if (available[0]) {
+  try {
+    await maypop.mcp.call(available[0].id, "tool-name", {});
+  } catch (error) {
+    if (isIntegrationUnavailableError(error)) {
+      // The connection changed after discovery; ask an admin to reconnect it.
+    } else throw error;
+  }
+}
+```
+
+Reasons are `access_revoked`, `account_deleted`, `disconnected`,
+`sign_in_expired`, and `unlinked`. Discover tools with `maypop.mcp.tools()`
+before calling them; tool names vary by integration. Never ask users for
+credentials.
+
 ## Local development hosts
 
 ### Vite
@@ -284,6 +320,10 @@ agent tools without invoking a real external integration:
   ]
 }
 ```
+
+The fixture URL supplies the server host shown in discovery; its path, query,
+account and name are not returned to the app. Add `"toolkitSlug"` to a server
+fixture to identify it as a catalog toolkit instead.
 
 `maypop.link.to(path)` returns a local deep link and `maypop.share()` opens a
 host-owned card containing one. Captured notifications with a `path` expose an

@@ -89,6 +89,7 @@ type MockMcpServer = {
   name: string;
   url: string;
   account: string | null;
+  toolkitSlug?: string;
   tools: MockMcpTool[];
 };
 
@@ -229,6 +230,8 @@ function validateMockMcp(path: string, value: unknown): MockMcpData {
       !server.name ||
       typeof server.url !== "string" ||
       !server.url ||
+      (server.toolkitSlug !== undefined &&
+        (typeof server.toolkitSlug !== "string" || !server.toolkitSlug)) ||
       !Array.isArray(server.tools)
     ) {
       throw new Error(
@@ -251,6 +254,29 @@ function validateMockMcp(path: string, value: unknown): MockMcpData {
     }
   }
   return data as MockMcpData;
+}
+
+function mockMcpDiscoveryServer(server: MockMcpServer) {
+  let need: { toolkit: string; name: string; logoUrl: null } | { host: string };
+  if (server.toolkitSlug) {
+    need = { toolkit: server.toolkitSlug, name: server.toolkitSlug, logoUrl: null };
+  } else {
+    let host: string;
+    try {
+      host = new URL(server.url).hostname;
+    } catch {
+      return null;
+    }
+    if (!host) return null;
+    need = { host };
+  }
+  return {
+    id: server.id,
+    need,
+    name: "toolkit" in need ? need.toolkit : need.host,
+    url: "",
+    account: null,
+  };
 }
 
 const KV_ACTIONS: KvPolicyAction[] = [
@@ -1564,7 +1590,8 @@ export async function createMaypopSandboxRuntime(
         requireDevelopmentScope("mcp:use");
         if (method === "GET" && url.pathname === "/app-api/mcp/servers") {
           sendJson(response, {
-            servers: mockMcp.servers.map(({ tools: _tools, ...server }) => server),
+            servers: mockMcp.servers.map(mockMcpDiscoveryServer).filter((server) => server !== null),
+            unavailable: [],
           });
           return;
         }

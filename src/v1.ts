@@ -1592,7 +1592,7 @@ interface MaypopAgentSession {
  *
  * **Discover, don't assume.** Servers are admin-configured, so what exists —
  * and what its tools are called — varies per app. `servers()` lists what's
- * connected (names are admin-chosen display names, not stable keys), and
+ * connected (names identify service kinds, not stable keys), and
  * `tools()` returns each server's live tool definitions with JSON-Schema
  * parameters. Find capabilities by inspecting tool names/descriptions or
  * matching server names loosely, never by hardcoding ids. In app UI code,
@@ -1639,6 +1639,8 @@ interface MaypopAgentSession {
  * ```
  */
 interface MaypopMcp {
+  /** Discover connected integrations and service kinds that need reconnecting. */
+  discover(): Promise<MaypopMcpDiscovery>;
   /**
    * The integrations available to this session. Empty when none —
    * feature-detect on this before showing integration-backed UI.
@@ -1664,16 +1666,40 @@ interface MaypopMcp {
   tools(serverId?: string): Promise<MaypopAgentToolDef[]>;
 }
 
+/** Discovery contains no connection credentials or owner account details. */
+export interface MaypopMcpDiscovery {
+  available: Array<{ id: string; need?: MaypopIntegrationNeed }>;
+  unavailable: MaypopUnavailableIntegration[];
+}
+
+/** A catalog toolkit or the host of a custom MCP server. */
+export type MaypopIntegrationNeed =
+  | { toolkit: string; name: string; logoUrl: string | null }
+  | { host: string };
+
+/** A service kind that an app admin can reconnect or replace. */
+export interface MaypopUnavailableIntegration {
+  need: MaypopIntegrationNeed;
+  reason: "access_revoked" | "account_deleted" | "disconnected" | "sign_in_expired" | "unlinked";
+}
+
+/** Error returned when a linked integration is unavailable. */
+export interface MaypopIntegrationUnavailableError extends Error {
+  code: "maypop/integration-unavailable";
+}
+
 /** One connected integration, from {@link MaypopMcp.servers}. */
 interface MaypopMcpServer {
   /** Pass to `call()`/`tools()`. Not stable across apps — never hardcode. */
   id: string;
-  /** Admin-chosen display name, e.g. `"Exa"` — match loosely if at all. */
+  /** Service-kind label — match loosely if at all. */
   name: string;
-  /** The MCP server's endpoint, e.g. `"https://mcp.exa.ai/mcp"`. */
+  /** Empty on hosts that protect connection details. */
   url: string;
-  /** Public identity for this connection (email or handle), when known. */
+  /** Null on hosts that protect account details. */
   account?: string | null;
+  /** Service kind, when provided by the host. */
+  need?: MaypopIntegrationNeed;
 }
 
 /** Raw MCP tool result, from {@link MaypopMcp.call}. */
