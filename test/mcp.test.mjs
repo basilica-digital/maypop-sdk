@@ -19,7 +19,8 @@ globalThis.setTimeout = (fn, ms, ...args) => {
 let response = {};
 let status = 200;
 globalThis.fetch = async (url) => new Response(JSON.stringify(
-  url.endsWith("/me") ? { id: "viewer", username: "viewer" } : response,
+  url.endsWith("/me") ? { id: "viewer", username: "viewer" } :
+    typeof response === "function" ? response(url) : response,
 ), { status });
 const { maypop, isIntegrationUnavailableError } = await import("@basilica-digital/maypop-sdk");
 const port = { postMessage() {}, start() {}, close() {} };
@@ -33,22 +34,42 @@ await maypop.ready();
 // Discovery must preserve outage reasons without exposing connection details.
 test("discovers live and unavailable integrations without account data", async () => {
   response = {
-    servers: [{ id: "one", name: "owner@example.test", url: "https://example.test/?key=secret", account: "owner@example.test", credential: "secret" }],
+    servers: [
+      { id: "one", name: "owner@example.test", url: "https://example.test/?key=secret", account: "owner@example.test", need: { host: "example.test", account: "owner" } },
+      { id: "two", need: { toolkit: "search", name: "search", logoUrl: null, token: "secret" } },
+    ],
     unavailable: [
       { need: { toolkit: "search", name: "Search", logoUrl: null, account: "owner" }, reason: "access_revoked", owner: "owner" },
       { need: { host: "example.test", url: "secret" }, reason: "sign_in_expired" },
     ],
   };
   assert.deepEqual(await maypop.mcp.discover(), {
-    available: [{ id: "one" }],
+    available: [
+      { id: "one", need: { host: "example.test" } },
+      { id: "two", need: { toolkit: "search", name: "search", logoUrl: null } },
+    ],
     unavailable: [
       { need: { toolkit: "search", name: "Search", logoUrl: null }, reason: "access_revoked" },
       { need: { host: "example.test" }, reason: "sign_in_expired" },
     ],
   });
   assert.equal((await maypop.mcp.servers())[0].id, "one");
+  response = { servers: [{ id: "legacy", name: "owner@example.test" }] };
+  assert.deepEqual(await maypop.mcp.discover(), { available: [{ id: "legacy" }], unavailable: [] });
   response = { servers: [] };
   assert.deepEqual(await maypop.mcp.discover(), { available: [], unavailable: [] });
+});
+
+// Aggregating tools must keep using callable IDs from safe discovery responses.
+test("aggregates and executes tools from safe server entries", async () => {
+  response = (url) => url.endsWith("/servers")
+    ? { servers: [{ id: "one", name: "search", url: "", account: null, need: { host: "search" } }] }
+    : url.endsWith("/list")
+      ? { tools: [{ name: "lookup", description: "Search", inputSchema: { type: "object" } }] }
+      : { structuredContent: { found: true } };
+  const [tool] = await maypop.mcp.tools();
+  assert.equal(tool.name, "lookup");
+  assert.deepEqual(await tool.execute({}), { found: true });
 });
 
 // A lost connection must be distinguishable from other service failures.

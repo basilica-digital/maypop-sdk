@@ -2195,7 +2195,12 @@
       requireMcp();
       const r = await api("GET", "/mcp/servers");
       return {
-        available: (r?.servers || []).map(({ id }) => ({ id })),
+        available: (r?.servers || []).map(({ id, need }) => ({
+          id,
+          ...(need ? { need: "toolkit" in need
+            ? { toolkit: need.toolkit, name: need.name, logoUrl: need.logoUrl }
+            : { host: need.host } } : {}),
+        })),
         unavailable: (r?.unavailable || []).map(({ need, reason }) => ({
           need: "toolkit" in need
             ? { toolkit: need.toolkit, name: need.name, logoUrl: need.logoUrl }
@@ -2206,8 +2211,7 @@
     },
     /**
      * The integrations available to this session:
-     * [{ id, name, url, account? }] (names are display names;
-     * account is the public identity when known). Empty when
+     * [{ id, name, url, account?, need? }]. Empty when
      * none — always feature-detect on this before building
      * integration-backed UI.
      */

@@ -82,10 +82,14 @@ import { MaypopProvider } from "@basilica-digital/maypop-sdk/react";
 ## Integration availability
 
 Use `maypop.mcp.discover()` to find connected integrations and service kinds
-that need attention. Its `available` entries contain an `id`;
+that need attention. Its `available` entries contain an `id` and, on hosts
+that support it, a service-kind `need`;
 `unavailable` entries contain a `need` (a toolkit or server host) and a
-`reason`. They do not include connection credentials or owner account details.
-The existing `maypop.mcp.servers()` continues to list connected servers.
+`reason`. Discovery results do not include connection credentials or owner
+account details. The existing `maypop.mcp.servers()` continues to list
+connected servers; current hosts return a service-kind name, an empty URL,
+and a null account for each. Older hosts may still send connection details
+in the underlying response even though `discover()` filters them out.
 
 ```ts
 import { isIntegrationUnavailableError, maypop } from "@basilica-digital/maypop-sdk";
@@ -316,6 +320,10 @@ agent tools without invoking a real external integration:
   ]
 }
 ```
+
+The fixture URL supplies the server host shown in discovery; its path, query,
+account and name are not returned to the app. Add `"toolkitSlug"` to a server
+fixture to identify it as a catalog toolkit instead.
 
 `maypop.link.to(path)` returns a local deep link and `maypop.share()` opens a
 host-owned card containing one. Captured notifications with a `path` expose an
