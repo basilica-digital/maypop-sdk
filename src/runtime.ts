@@ -435,6 +435,9 @@
     if (mapCodes && res.status === 409) {
       return err("maypop/conflict", detail || what + " -> 409");
     }
+    if (code === "integration_unavailable") {
+      return err("maypop/integration-unavailable", detail || "Integration unavailable");
+    }
     if (code === "storage_quota_exceeded") {
       return err(
         "maypop/storage-full",
@@ -2186,6 +2189,21 @@
   }
 
   const mcp = {
+    /** Discover available integrations and service kinds needing reconnection. */
+    async discover() {
+      await readyPromise;
+      requireMcp();
+      const r = await api("GET", "/mcp/servers");
+      return {
+        available: (r?.servers || []).map(({ id, name }) => ({ id, name })),
+        unavailable: (r?.unavailable || []).map(({ need, reason }) => ({
+          need: "toolkit" in need
+            ? { toolkit: need.toolkit, name: need.name, logoUrl: need.logoUrl }
+            : { host: need.host },
+          reason,
+        })),
+      };
+    },
     /**
      * The integrations available to this session:
      * [{ id, name, url, account? }] (names are display names;

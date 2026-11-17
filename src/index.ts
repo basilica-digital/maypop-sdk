@@ -2,6 +2,12 @@ import "./runtime.js";
 import type { MaypopSdk } from "./v1.js";
 
 export type Maypop = MaypopSdk;
+export type { MaypopMcpDiscovery, MaypopUnavailableIntegration, MaypopIntegrationUnavailableError } from "./v1.js";
+
+/** Check whether an integration needs to be reconnected or replaced. */
+export function isIntegrationUnavailableError(error: unknown): error is import("./v1.js").MaypopIntegrationUnavailableError {
+  return error instanceof Error && "code" in error && error.code === "maypop/integration-unavailable";
+}
 
 const browserOnly = (): never => {
   throw new Error(

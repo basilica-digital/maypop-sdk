@@ -1639,6 +1639,8 @@ interface MaypopAgentSession {
  * ```
  */
 interface MaypopMcp {
+  /** Discover connected integrations and service kinds that need reconnecting. */
+  discover(): Promise<MaypopMcpDiscovery>;
   /**
    * The integrations available to this session. Empty when none —
    * feature-detect on this before showing integration-backed UI.
@@ -1662,6 +1664,23 @@ interface MaypopMcp {
    * `serverId` is given, else all connected servers'.
    */
   tools(serverId?: string): Promise<MaypopAgentToolDef[]>;
+}
+
+/** Discovery contains no connection credentials or owner account details. */
+export interface MaypopMcpDiscovery {
+  available: Array<{ id: string; name: string }>;
+  unavailable: MaypopUnavailableIntegration[];
+}
+
+/** A service kind that an app admin can reconnect or replace. */
+export interface MaypopUnavailableIntegration {
+  need: { toolkit: string; name: string; logoUrl: string | null } | { host: string };
+  reason: "access_revoked" | "account_deleted" | "disconnected" | "sign_in_expired" | "unlinked";
+}
+
+/** Error returned when a linked integration is unavailable. */
+export interface MaypopIntegrationUnavailableError extends Error {
+  code: "maypop/integration-unavailable";
 }
 
 /** One connected integration, from {@link MaypopMcp.servers}. */
