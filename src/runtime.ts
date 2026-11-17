@@ -2195,7 +2195,7 @@
       requireMcp();
       const r = await api("GET", "/mcp/servers");
       return {
-        available: (r?.servers || []).map(({ id, name }) => ({ id, name })),
+        available: (r?.servers || []).map(({ id }) => ({ id })),
         unavailable: (r?.unavailable || []).map(({ need, reason }) => ({
           need: "toolkit" in need
             ? { toolkit: need.toolkit, name: need.name, logoUrl: need.logoUrl }

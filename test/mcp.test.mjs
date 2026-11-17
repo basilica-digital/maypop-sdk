@@ -33,14 +33,14 @@ await maypop.ready();
 // Discovery must preserve outage reasons without exposing connection details.
 test("discovers live and unavailable integrations without account data", async () => {
   response = {
-    servers: [{ id: "one", name: "Search", url: "https://example.test/?key=secret", account: "owner", credential: "secret" }],
+    servers: [{ id: "one", name: "owner@example.test", url: "https://example.test/?key=secret", account: "owner@example.test", credential: "secret" }],
     unavailable: [
       { need: { toolkit: "search", name: "Search", logoUrl: null, account: "owner" }, reason: "access_revoked", owner: "owner" },
       { need: { host: "example.test", url: "secret" }, reason: "sign_in_expired" },
     ],
   };
   assert.deepEqual(await maypop.mcp.discover(), {
-    available: [{ id: "one", name: "Search" }],
+    available: [{ id: "one" }],
     unavailable: [
       { need: { toolkit: "search", name: "Search", logoUrl: null }, reason: "access_revoked" },
       { need: { host: "example.test" }, reason: "sign_in_expired" },

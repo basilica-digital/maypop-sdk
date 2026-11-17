@@ -82,7 +82,7 @@ import { MaypopProvider } from "@basilica-digital/maypop-sdk/react";
 ## Integration availability
 
 Use `maypop.mcp.discover()` to find connected integrations and service kinds
-that need attention. Its `available` entries contain an `id` and `name`;
+that need attention. Its `available` entries contain an `id`;
 `unavailable` entries contain a `need` (a toolkit or server host) and a
 `reason`. They do not include connection credentials or owner account details.
 The existing `maypop.mcp.servers()` continues to list connected servers.

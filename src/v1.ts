@@ -1668,7 +1668,7 @@ interface MaypopMcp {
 
 /** Discovery contains no connection credentials or owner account details. */
 export interface MaypopMcpDiscovery {
-  available: Array<{ id: string; name: string }>;
+  available: Array<{ id: string }>;
   unavailable: MaypopUnavailableIntegration[];
 }
 
