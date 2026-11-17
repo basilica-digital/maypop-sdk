@@ -21,18 +21,10 @@ test("a web tab without a session links to the app in Maypop", () => {
   assert.doesNotMatch(view.message, /scan|expired/i);
 });
 
-// Inside the native app view the cookie was seeded and the session ended;
-// there is no web page to link to, and a session lost mid-visit on the web
-// is still reported as expired.
-test("an ended session says so, in the native app and on the web", () => {
-  const native = shellSignedOut({
-    native: true,
-    expired: false,
-    appUrl: `https://maypop.example/app/${APP}`,
-  });
-  assert.equal(native.open, null);
-  assert.match(native.message, /^Session expired\./);
-
+// A session lost during the visit on the web is reported as expired, with
+// the way back to the app. The native app view shows nothing from the
+// shell: it hides the shell's status line and recovers on its own.
+test("an ended session says so on the web and is left to the native app", () => {
   const web = shellSignedOut({
     native: false,
     expired: true,
@@ -40,6 +32,11 @@ test("an ended session says so, in the native app and on the web", () => {
   });
   assert.match(web.message, /^Session expired\./);
   assert.equal(web.open?.href, `https://maypop.example/app/${APP}`);
+
+  assert.equal(
+    shellSignedOut({ native: true, expired: true, appUrl: web.open.href }),
+    null,
+  );
 });
 
 // A backend that serves this shell without filling the new placeholders

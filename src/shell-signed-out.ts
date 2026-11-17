@@ -4,8 +4,11 @@
  * Only the native app view and a code scanned from a computer give the
  * shell its session cookie. On the web a tab or popup opened onto the shell
  * address has none, so the useful thing to offer is the app's page in
- * Maypop. Inside the native app view the cookie was there and the session
- * ended, so the person reopens the app from Maypop around it.
+ * Maypop.
+ *
+ * Inside the native app view the shell shows nothing: that view hides the
+ * shell's status line, and it learns of a refused session itself, from the
+ * shell's request to `/_maypop/session/access`, and takes the app down.
  */
 
 export interface ShellSignedOut {
@@ -40,10 +43,8 @@ export function shellSignedOut(options: {
   native: boolean;
   expired: boolean;
   appUrl: string | null;
-}): ShellSignedOut {
-  if (options.native) {
-    return { message: "Session expired. Open this app again in Maypop.", open: null };
-  }
+}): ShellSignedOut | null {
+  if (options.native) return null;
   const open = options.appUrl
     ? { label: "Open this app in Maypop", href: options.appUrl }
     : null;

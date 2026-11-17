@@ -67,7 +67,8 @@ import { maypopAppUrl, shellSignedOut } from "./shell-signed-out";
 
   /**
    * No session to open the app with. On the web this links to the app's
-   * page in Maypop, the place that runs it (`shell-signed-out.ts`).
+   * page in Maypop, the place that runs it; the native app view handles a
+   * refused session itself (`shell-signed-out.ts`).
    */
   function showSignedOut(expired) {
     if (!statusEl) return;
@@ -76,6 +77,7 @@ import { maypopAppUrl, shellSignedOut } from "./shell-signed-out";
       expired,
       appUrl: maypopAppUrl(cfg.maypopOrigin, cfg.appId),
     });
+    if (!view) return;
     setStatus(view.message);
     if (!view.open) return;
     const link = document.createElement("a");
