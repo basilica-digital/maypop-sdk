@@ -1,6 +1,6 @@
 {
   "name": "@basilica-digital/maypop-sdk",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "type": "module",
   "description": "The browser SDK for apps running on Maypop.",
   "license": "Apache-2.0",
