@@ -111,7 +111,7 @@ test("allow this time answers only the request on the card", () => {
 
 // A tab's shell, its app frame and a frame inside the app, each showing a
 // document, plus a session that records the replies it posts.
-function tab() {
+function tab(store, scope) {
   const shell = { name: "shell" };
   shell.parent = shell;
   const app = { name: "app", parent: shell, document: { url: "about:blank" } };
@@ -121,9 +121,95 @@ function tab() {
     app: () => app,
     shell,
     reply: (to, id, granted) => sent.push([to.name, id, granted]),
+    store,
+    scope,
   });
   return { shell, app, nested, sent, session };
 }
+
+// An in-memory stand-in for the tab's sessionStorage.
+function tabStorage() {
+  const items = new Map();
+  return () => ({
+    getItem: (key) => items.get(key) ?? null,
+    setItem: (key, value) => items.set(key, String(value)),
+  });
+}
+
+// The card promises that Allow and Don't allow last until the tab closes, but
+// a reload started a fresh session with no answers and the card came back.
+// The answers must survive a reload; Allow this time must not.
+test("allow and don't allow survive a reload of the tab", () => {
+  const store = tabStorage();
+  const before = tab(store);
+  before.session.request(before.app, "p1", ["camera"]);
+  before.session.answer(before.session.shown(), "block");
+  before.session.request(before.app, "p2", ["microphone"]);
+  before.session.answer(before.session.shown(), "allow");
+  before.session.request(before.app, "p3", ["geolocation"]);
+  before.session.answer(before.session.shown(), "once");
+
+  const after = tab(store);
+  after.session.request(after.app, "p1", ["camera"]);
+  after.session.request(after.app, "p2", ["microphone"]);
+  assert.deepEqual(after.sent, [
+    ["app", "p1", false],
+    ["app", "p2", true],
+  ]);
+  assert.equal(after.session.shown(), null);
+
+  after.session.request(after.app, "p3", ["geolocation"]);
+  assert.deepEqual(after.session.shown().features, ["geolocation"]);
+
+  // A new tab has its own empty sessionStorage and asks again.
+  const other = tab(tabStorage());
+  other.session.request(other.app, "p1", ["camera"]);
+  assert.deepEqual(other.session.shown().features, ["camera"]);
+});
+
+// Apps mounted on paths of one origin (/__app/{label}) share the tab's
+// sessionStorage: an Allow given to one app must not let the next app in the
+// tab skip the card.
+test("apps on paths of one origin keep their answers apart", () => {
+  const store = tabStorage();
+  const first = tab(store, "/__app/first");
+  first.session.request(first.app, "p1", ["camera"]);
+  first.session.answer(first.session.shown(), "allow");
+
+  const second = tab(store, "/__app/second");
+  second.session.request(second.app, "p1", ["camera"]);
+  assert.deepEqual(second.sent, []);
+  assert.deepEqual(second.session.shown().features, ["camera"]);
+
+  const again = tab(store, "/__app/first");
+  again.session.request(again.app, "p1", ["camera"]);
+  assert.deepEqual(again.sent, [["app", "p1", true]]);
+});
+
+// sessionStorage can be missing or throw (blocked storage, a full quota, a
+// sandboxed document): the card must keep working for the page load.
+test("answers last for the page load when storage throws", () => {
+  const broken = () => {
+    throw new Error("SecurityError");
+  };
+  const full = () => ({
+    getItem: () => "{not json",
+    setItem: () => {
+      throw new Error("QuotaExceededError");
+    },
+  });
+  for (const store of [broken, full, undefined]) {
+    const { app, sent, session } = tab(store);
+    session.request(app, "p1", ["camera"]);
+    session.answer(session.shown(), "block");
+    session.request(app, "p2", ["camera"]);
+    assert.deepEqual(sent, [
+      ["app", "p1", false],
+      ["app", "p2", false],
+    ]);
+    assert.equal(session.shown(), null);
+  }
+});
 
 // The app frame keeps one window object across documents and every document
 // numbers its ids from p1. An Allow on the old document's camera question,

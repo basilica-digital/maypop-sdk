@@ -1,0 +1,1 @@
+In a shell opened in its own browser tab, the camera, microphone and location card remembers Allow and Don't allow across reloads until the tab closes. A duplicated tab, or a window the app opens, keeps the same answers; a tab you open fresh asks again. Allow this time still answers one request only.

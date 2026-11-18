@@ -679,6 +679,8 @@ import { maypopAppUrl, shellSignedOut } from "./shell-signed-out";
           /* the asking frame is gone */
         }
       },
+      store: () => window.sessionStorage,
+      scope: mount,
     });
     /** The request whose question the card shows. */
     let onCard = null;

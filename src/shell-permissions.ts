@@ -5,10 +5,15 @@
  * asks with `maypop:permission-request` and waits for
  * `maypop:permission-result`; the shell shows its card and replies.
  *
- * Allow and Don't allow last while the tab is open; Allow this time answers
- * only the request on the card. Nothing is stored: the app shares the
- * shell's origin, so anything the shell could save the app could write too. The card is the question the person answers before the browser's
- * own prompt, not a lock: an app that skips it reaches the browser directly.
+ * Allow and Don't allow last while the tab is open, reloads included: they
+ * are kept in the tab's `sessionStorage` under the app's mount, so a tab the
+ * person opens fresh asks again. A duplicated tab, or a popup the app opens
+ * with `window.open` (which copies `sessionStorage`), keeps the answers: it
+ * is the same app. Allow this time answers only the request on the card and
+ * is never kept. The app shares
+ * the shell's origin and could write that entry too, which is fine because
+ * the card is the question the person answers before the browser's own
+ * prompt, not a lock: an app that skips it reaches the browser directly.
  */
 
 export type ShellFeature = "camera" | "microphone" | "geolocation";
@@ -167,6 +172,51 @@ export function shellAsksForApp(win: {
   return win.top === win && !win.ReactNativeWebView;
 }
 
+/** The `Storage` methods the session keeps the tab's answers with. */
+export interface ShellPermissionStore {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+const STORE_KEY = "maypop:shell-permissions";
+
+type ShellDecisions = ShellPermissions["decisions"];
+
+/**
+ * The answers kept for this tab, or none when the store is missing,
+ * unreadable or holds something else.
+ */
+function loadDecisions(
+  store: (() => ShellPermissionStore | null | undefined) | undefined,
+  key: string,
+): ShellDecisions {
+  try {
+    const saved: unknown = JSON.parse(store?.()?.getItem(key) ?? "null");
+    if (!saved || typeof saved !== "object") return {};
+    const decisions: ShellDecisions = {};
+    for (const feature of SHELL_FEATURES) {
+      const value = (saved as Record<string, unknown>)[feature];
+      if (value === "allow" || value === "block") decisions[feature] = value;
+    }
+    return decisions;
+  } catch {
+    return {};
+  }
+}
+
+/** Keeps the tab's answers; a store that refuses leaves them in memory only. */
+function saveDecisions(
+  store: (() => ShellPermissionStore | null | undefined) | undefined,
+  key: string,
+  decisions: ShellDecisions,
+): void {
+  try {
+    store?.()?.setItem(key, JSON.stringify(decisions));
+  } catch {
+    /* storage is full, blocked or gone */
+  }
+}
+
 /** What the shell page gives `shellPermissionSession`. */
 export interface ShellPermissionPage<W> {
   /** The app frame's window, if the frame exists. */
@@ -175,6 +225,16 @@ export interface ShellPermissionPage<W> {
   shell: W;
   /** Posts `maypop:permission-result` to `to`. */
   reply(to: W, id: string, granted: boolean): void;
+  /**
+   * The tab's `sessionStorage`, read on start and written on each answer.
+   * Reading it may throw; without it answers last for this page load.
+   */
+  store?: () => ShellPermissionStore | null | undefined;
+  /**
+   * The app's mount path (`""` on its own origin). Apps mounted on paths of
+   * one origin share its `sessionStorage`, so each keeps its answers apart.
+   */
+  scope?: string;
 }
 
 /**
@@ -204,7 +264,11 @@ function documentOf(win: unknown): unknown {
  * tell those apart.
  */
 export function shellPermissionSession<W>(page: ShellPermissionPage<W>) {
-  let state = noShellPermissions<W>();
+  const key = STORE_KEY + (page.scope ?? "");
+  let state: ShellPermissions<W> = {
+    decisions: loadDecisions(page.store, key),
+    asking: [],
+  };
 
   function inApp(win: W): boolean {
     return shellFrameAsks(win, page.app(), page.shell);
@@ -216,6 +280,9 @@ export function shellPermissionSession<W>(page: ShellPermissionPage<W>) {
 
   function apply(event: ShellPermissionEvent<W>): void {
     const step = shellPermissionStep(state, event);
+    if (step.state.decisions !== state.decisions) {
+      saveDecisions(page.store, key, step.state.decisions);
+    }
     state = step.state;
     for (const reply of step.replies) {
       if (live(reply)) page.reply(reply.from, reply.id, reply.granted);
