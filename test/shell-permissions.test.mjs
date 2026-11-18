@@ -111,7 +111,7 @@ test("allow this time answers only the request on the card", () => {
 
 // A tab's shell, its app frame and a frame inside the app, each showing a
 // document, plus a session that records the replies it posts.
-function tab(store) {
+function tab(store, scope) {
   const shell = { name: "shell" };
   shell.parent = shell;
   const app = { name: "app", parent: shell, document: { url: "about:blank" } };
@@ -122,6 +122,7 @@ function tab(store) {
     shell,
     reply: (to, id, granted) => sent.push([to.name, id, granted]),
     store,
+    scope,
   });
   return { shell, app, nested, sent, session };
 }
@@ -164,6 +165,25 @@ test("allow and don't allow survive a reload of the tab", () => {
   const other = tab(tabStorage());
   other.session.request(other.app, "p1", ["camera"]);
   assert.deepEqual(other.session.shown().features, ["camera"]);
+});
+
+// Apps mounted on paths of one origin (/__app/{label}) share the tab's
+// sessionStorage: an Allow given to one app must not let the next app in the
+// tab skip the card.
+test("apps on paths of one origin keep their answers apart", () => {
+  const store = tabStorage();
+  const first = tab(store, "/__app/first");
+  first.session.request(first.app, "p1", ["camera"]);
+  first.session.answer(first.session.shown(), "allow");
+
+  const second = tab(store, "/__app/second");
+  second.session.request(second.app, "p1", ["camera"]);
+  assert.deepEqual(second.sent, []);
+  assert.deepEqual(second.session.shown().features, ["camera"]);
+
+  const again = tab(store, "/__app/first");
+  again.session.request(again.app, "p1", ["camera"]);
+  assert.deepEqual(again.sent, [["app", "p1", true]]);
 });
 
 // sessionStorage can be missing or throw (blocked storage, a full quota, a

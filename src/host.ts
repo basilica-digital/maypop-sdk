@@ -680,6 +680,7 @@ import { maypopAppUrl, shellSignedOut } from "./shell-signed-out";
         }
       },
       store: () => window.sessionStorage,
+      scope: mount,
     });
     /** The request whose question the card shows. */
     let onCard = null;
